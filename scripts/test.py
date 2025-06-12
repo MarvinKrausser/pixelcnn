@@ -35,23 +35,50 @@ import matplotlib.pyplot as plt
 
 
 img = torch.ones(3, 25, 25)
-vert_r = VerticalStackConvolutionR(c_in=3, c_out=9, kernel_size=3, mask_center=True)
+vert_r = VerticalStackConvolutionR(c_in=9, c_out=9, kernel_size=3, mask_center=True)
 mask = vert_r.mask
 
 print("out: r")
 for image in mask[:3]:
-    print(f"red: {image[0]}")
-    print(f"green: {image[1]}")
-    print(f"blue: {image[2]}")
+    print("red:")
+    for input in image[:3]:
+        print(input)
+
+
+    print("green:")
+    for input in image[3:6]:
+        print(input)
+
+    print("blue:")
+    for input in image[6:]:
+        print(input)
 
 print("out: g")
 for image in mask[3:6]:
-    print(f"red: {image[0]}")
-    print(f"green: {image[1]}")
-    print(f"blue: {image[2]}")
+    print("red:")
+    for input in image[:3]:
+        print(input)
+
+
+    print("green:")
+    for input in image[3:6]:
+        print(input)
+
+    print("blue:")
+    for input in image[6:]:
+        print(input)
 
 print("out: b")
 for image in mask[6:9]:
-    print(f"red: {image[0]}")
-    print(f"green: {image[1]}")
-    print(f"blue: {image[2]}")
+    print("red:")
+    for input in image[:3]:
+        print(input)
+
+
+    print("green:")
+    for input in image[3:6]:
+        print(input)
+
+    print("blue:")
+    for input in image[6:]:
+        print(input)

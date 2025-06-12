@@ -182,15 +182,14 @@ class VerticalStackConvolutionR(MaskedConvolution):
         mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
         mask[:, :, kernel_size//2+1:,:] = 0
 
-        if(not(c_in == 3) or not(c_out % 3 == 0)):
+        if(not(c_in % 3 == 0) or not(c_out % 3 == 0)):
             raise Exception("Not divisible by 3")
 
         # For the very first convolution, we will also mask the center row
         if mask_center:
-            for i_out in range(c_out // 3):
-                mask[i_out, :, kernel_size//2,:] = 0 #Out: r, in: r,g,b
-                mask[i_out + (c_out // 3), 1:, kernel_size//2,:] = 0 #Out: g, in: g,b
-                mask[i_out + ((c_out // 3)) * 2, 2, kernel_size//2,:] = 0 #Out: b, in: b
+            mask[                :c_out // 3      ,          :               , kernel_size//2,:] = 0 #Out: r, in: r,g,b
+            mask[c_out // 3      :(c_out * 2) // 3, c_in // 3:               , kernel_size//2,:] = 0 #Out: g, in: g,b
+            mask[(c_out * 2) // 3:                , (c_in * 2) // 3:         , kernel_size//2,:] = 0 #Out: b, in: b
 
         super().__init__(c_in, c_out, mask, **kwargs)
 
@@ -202,17 +201,44 @@ class HorizontalStackConvolutionR(MaskedConvolution):
         mask = torch.ones(c_out, c_in, 1,kernel_size)
         mask[:, :, 0, kernel_size//2+1:] = 0
 
-        if(not(c_in == 3) or not(c_out % 3 == 0)):
+        if(not(c_in % 3 == 0) or not(c_out % 3 == 0)):
             raise Exception("Not divisible by 3")
 
         # For the very first convolution, we will also mask the center pixel
         if mask_center:
-            for i_out in range(c_out // 3):
-                mask[i_out, :, 0, kernel_size//2] = 0 #Out: r, in: r,g,b
-                mask[i_out + (c_out // 3), 1:, 0, kernel_size//2] = 0 #Out: g, in: g,b
-                mask[i_out + ((c_out // 3)) * 2, 2:, 0, kernel_size//2] = 0 #Out: b, in: b
+            mask[                :c_out // 3      ,          :               , 0, kernel_size//2] = 0 #Out: r, in: r,g,b
+            mask[c_out // 3      :(c_out * 2) // 3, c_in // 3:               , 0, kernel_size//2] = 0 #Out: g, in: g,b
+            mask[(c_out * 2) // 3:                , (c_in * 2) // 3:         , 0, kernel_size//2] = 0 #Out: b, in: b
 
         super().__init__(c_in, c_out, mask, **kwargs)
+
+class GatedMaskedConvR(nn.Module):
+
+    def __init__(self, c_in, **kwargs):
+        """
+        Gated Convolution block implemented the computation graph shown above.
+        """
+        super().__init__()
+        self.conv_vert = VerticalStackConvolutionR(c_in, c_out=2*c_in, mask_center=True, **kwargs)
+        self.conv_horiz = HorizontalStackConvolutionR(c_in, c_out=2*c_in, mask_center=True, **kwargs)
+        self.conv_vert_to_horiz = nn.Conv2d(2*c_in, 2*c_in, kernel_size=1, padding=0)
+        self.conv_horiz_1x1 = nn.Conv2d(c_in, c_in, kernel_size=1, padding=0)
+
+    def forward(self, v_stack, h_stack):
+        # Vertical stack (left)
+        v_stack_feat = self.conv_vert(v_stack)
+        v_val, v_gate = v_stack_feat.chunk(2, dim=1)
+        v_stack_out = torch.tanh(v_val) * torch.sigmoid(v_gate)
+
+        # Horizontal stack (right)
+        h_stack_feat = self.conv_horiz(h_stack)
+        h_stack_feat = h_stack_feat + self.conv_vert_to_horiz(v_stack_feat)
+        h_val, h_gate = h_stack_feat.chunk(2, dim=1)
+        h_stack_feat = torch.tanh(h_val) * torch.sigmoid(h_gate)
+        h_stack_out = self.conv_horiz_1x1(h_stack_feat)
+        h_stack_out = h_stack_out + h_stack
+
+        return v_stack_out, h_stack_out
 
 
 class GatedMaskedConv(nn.Module):
@@ -245,110 +271,47 @@ class GatedMaskedConv(nn.Module):
     
 
 class DIYPixelCNN(nn.Module):
-    def __init__(self, input_channels=1, hidden_channels=64):
+    def __init__(self, input_channels=1, hidden_channels=66):
         super().__init__()
 
         self.act_fn = nn.ELU()
         self.dropout = nn.Dropout2d(p=0.2)
 
-        self.conv_hor_init = HorizontalStackConvolutionR(c_in=input_channels, c_out=hidden_channels*3, mask_center=True)
-        self.conv_ver_init = VerticalStackConvolutionR(c_in=input_channels, c_out=hidden_channels*3, mask_center=True)
+        self.conv_hor_init = HorizontalStackConvolutionR(c_in=input_channels, c_out=hidden_channels, mask_center=True)
+        self.conv_ver_init = VerticalStackConvolutionR(c_in=input_channels, c_out=hidden_channels, mask_center=True)
 
-        self.r_to_g = nn.Conv2d(in_channels=hidden_channels, out_channels=hidden_channels, kernel_size=1, padding=0)
-        self.r_to_b = nn.Conv2d(in_channels=hidden_channels, out_channels=hidden_channels, kernel_size=1, padding=0)
-        self.g_to_b = nn.Conv2d(in_channels=hidden_channels, out_channels=hidden_channels, kernel_size=1, padding=0)
-
-        self.masked_r = nn.ModuleList([
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=2),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=4),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=8),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=16),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=32),
-            GatedMaskedConv(c_in=hidden_channels)
+        self.masked = nn.ModuleList([
+            GatedMaskedConvR(c_in=hidden_channels),
+            GatedMaskedConvR(c_in=hidden_channels, dilation=2),
+            GatedMaskedConvR(c_in=hidden_channels),
+            GatedMaskedConvR(c_in=hidden_channels, dilation=4),
+            GatedMaskedConvR(c_in=hidden_channels),
+            GatedMaskedConvR(c_in=hidden_channels, dilation=8),
+            GatedMaskedConvR(c_in=hidden_channels),
+            GatedMaskedConvR(c_in=hidden_channels, dilation=16),
+            GatedMaskedConvR(c_in=hidden_channels),
+            GatedMaskedConvR(c_in=hidden_channels, dilation=32),
+            GatedMaskedConvR(c_in=hidden_channels)
         ])
-
-        self.masked_g = nn.ModuleList([
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=2),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=4),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=8),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=16),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=32),
-            GatedMaskedConv(c_in=hidden_channels)
-        ])
-
-        self.masked_b = nn.ModuleList([
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=2),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=4),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=8),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=16),
-            GatedMaskedConv(c_in=hidden_channels),
-            GatedMaskedConv(c_in=hidden_channels, dilation=32),
-            GatedMaskedConv(c_in=hidden_channels)
-        ])
-
-        self.conv_out_r = nn.Conv2d(in_channels=hidden_channels, out_channels=256, kernel_size=1, padding=0)
-        self.conv_out_g = nn.Conv2d(in_channels=hidden_channels, out_channels=256, kernel_size=1, padding=0)
-        self.conv_out_b = nn.Conv2d(in_channels=hidden_channels, out_channels=256, kernel_size=1, padding=0)
+        
+        self.conv_out = nn.Conv2d(in_channels=hidden_channels, out_channels=input_channels * 256, kernel_size=1, padding=0)
 
     def forward(self, x):
         x = (x.float() / 255.0) * 2 - 1
 
-        #generate initial feature map
         x_hor = self.conv_hor_init(x)
         x_ver = self.conv_ver_init(x)
-        hidden_input = x_hor.size(1) // 3
 
-        #multiply feature maps
-        x_hor_r = x_hor[:, :hidden_input, :, :]
-        x_ver_r = x_ver[:, :hidden_input, :, :]
+        for masked in self.masked:
+            x_ver, x_hor = masked(x_ver, x_hor)
+            x_hor = self.dropout(x_hor)
+            x_ver = self.dropout(x_ver)
 
-        x_hor_g = x_hor[:, hidden_input:hidden_input*2, :, :]
-        x_ver_g = x_ver[:, hidden_input:hidden_input*2, :, :]
-
-        x_hor_b = x_hor[:, hidden_input*2:hidden_input*3, :, :]
-        x_ver_b = x_ver[:, hidden_input*2:hidden_input*3, :, :]
-
-        #apply hidden layers
-        for index in range(len(self.masked_r)):
-            x_ver_r, x_hor_r = self.masked_r[index](x_ver_r, x_hor_r)
-            x_hor_r = self.dropout(x_hor_r)
-            x_ver_r = self.dropout(x_ver_r)
-
-            x_ver_g, x_hor_g = self.masked_g[index](x_ver_g + self.r_to_g(x_ver_r), x_hor_g + self.r_to_g(x_hor_r))
-            x_hor_g = self.dropout(x_hor_g)
-            x_ver_g = self.dropout(x_ver_g)
-
-
-            x_ver_b, x_hor_b = self.masked_b[index](x_ver_b + self.r_to_b(x_ver_r) + self.g_to_b(x_ver_g), x_hor_b + self.r_to_b(x_hor_r) + self.g_to_b(x_hor_g))
-            x_hor_b = self.dropout(x_hor_b)
-            x_ver_b = self.dropout(x_ver_b)
-
-        #generate output
-        out_r = self.conv_out_r(self.act_fn(x_hor_r))
-        out_g = self.conv_out_g(self.act_fn(x_hor_g))
-        out_b = self.conv_out_b(self.act_fn(x_hor_b))
+        out = self.conv_out(self.act_fn(x_hor))
 
         # Output dimensions: [Batch, Classes, Channels, Height, Width]
-        out_r = out_r.reshape(out_r.shape[0], 256, out_r.shape[1]//256, out_r.shape[2], out_r.shape[3])
-        out_g = out_g.reshape(out_g.shape[0], 256, out_g.shape[1]//256, out_g.shape[2], out_r.shape[3])
-        out_b = out_b.reshape(out_b.shape[0], 256, out_b.shape[1]//256, out_b.shape[2], out_b.shape[3])
-
-        #put together rgb channels to one image
-        out = torch.cat([out_r, out_g, out_b], dim=2)
+        out = out.reshape(out.shape[0], 256, out.shape[1]//256, out.shape[2], out.shape[3])
+        return out
 
         return out
     
@@ -527,6 +490,7 @@ def trainPixelCNNGray(model, optimizer, loss_module, train_data_loader, validati
     if(train or not os.path.isfile(os.path.join(SAVE_PATH, model_name))):
 
         for epoch in range(num_epochs):
+            epoch = epoch + 21
             saving = False
             ############
             # Training #
