@@ -490,7 +490,7 @@ def trainPixelCNNGray(model, optimizer, loss_module, train_data_loader, validati
     if(train or not os.path.isfile(os.path.join(SAVE_PATH, model_name))):
 
         for epoch in range(num_epochs):
-            epoch = epoch + 21
+            epoch = epoch
             saving = False
             ############
             # Training #

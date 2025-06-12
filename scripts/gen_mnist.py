@@ -68,11 +68,8 @@ optimizer    = torch.optim.Adam(model.parameters(), lr=1e-3)
 loss_module = nn.CrossEntropyLoss()
 
 
-show_imgs(sample(model, [24, 1, 28, 28], device, mode_name=os.path.join("gen_mnist", "v20_gen_mnist.tar"), SAVE_PATH=SAVE_PATH))
-exit()
-
-state_dict = torch.load(os.path.join(SAVE_PATH, "gen_mnist", "v20_gen_mnist.tar"), weights_only=False)
-model.load_state_dict(state_dict)
+#show_imgs(sample(model, [24, 1, 28, 28], device, mode_name=os.path.join("gen_mnist", "v20_gen_mnist.tar"), SAVE_PATH=SAVE_PATH))
+#exit()
 
 trainPixelCNNGray(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, test_data_loader=test_loader, 
               validation_data_loader=val_loader, device=device, SAVE_PATH=SAVE_PATH, num_epochs=100, model_name="gen_mnist.tar", folder_name="gen_mnist", train=True)
