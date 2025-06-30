@@ -58,8 +58,8 @@ train_transform = transforms.Compose([transforms.RandomHorizontalFlip(),
 # We need to do a little trick because the validation set should not use the augmentation.
 train_dataset = CIFAR10(root=DATASET_PATH, train=True, transform=train_transform, download=True)
 val_dataset = CIFAR10(root=DATASET_PATH, train=True, transform=test_transform, download=True)
-train_set, _ = torch.utils.data.random_split(train_dataset, [1000, 49000])
-_, val_set = torch.utils.data.random_split(val_dataset, [49000, 1000])
+train_set, _ = torch.utils.data.random_split(train_dataset, [45000, 5000])
+_, val_set = torch.utils.data.random_split(val_dataset, [45000, 5000])
 
 # Loading the test set
 test_set = CIFAR10(root=DATASET_PATH, train=False, transform=test_transform, download=True)
@@ -72,13 +72,13 @@ test_loader = data.DataLoader(test_set, batch_size=40, shuffle=False, drop_last=
 # 2. Model, optimiser, loss
 model = PixelCNN(input_channels=3, hidden_channels=96, kernel_size=3)
 model.to(device)
-optimizer    = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_module = nn.CrossEntropyLoss()
 
-#show_imgs(sample(model, [24, 3, 32, 32], device, mode_name=os.path.join("gen_CIFAR", "v21_gen_CIFAR.tar"), SAVE_PATH=SAVE_PATH))
-#exit()
+show_imgs(sample(model, [12, 3, 32, 32], device, mode_name=os.path.join("gen_CIFAR", "v5_gen_CIFAR.tar"), SAVE_PATH=SAVE_PATH))
+exit()
 
-#best: 2.633
+#best: 1.97
 trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, test_data_loader=test_loader, 
               validation_data_loader=val_loader, device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_CIFAR.tar", folder_name="gen_CIFAR", train=True)
 

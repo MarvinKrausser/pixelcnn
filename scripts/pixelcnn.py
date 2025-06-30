@@ -136,7 +136,6 @@ class GatedMaskedConv(nn.Module):
         h_val, h_gate = self.split_val_gate_rgb(h_stack_feat)
 
         h_stack_feat = torch.tanh(h_val) * torch.sigmoid(h_gate)
-        h_stack_feat = self.dropout(h_stack_feat)
         h_stack_out = self.conv_horiz_1x1(h_stack_feat)
         h_stack_out = h_stack_out + h_stack
 
