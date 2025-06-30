@@ -29,13 +29,21 @@ import torchvision
 from torchvision.datasets import CIFAR10
 from torchvision import transforms
 
-from model import VerticalStackConvolutionR, HorizontalStackConvolutionR
+from model import GatedMaskedConvR, VerticalStackConvolutionR, HorizontalStackConvolutionR
 import matplotlib.pyplot as plt
+
+
+conv = nn.ConvTranspose2d(in_channels=1, out_channels=1, kernel_size=2, stride=1, padding=1)
+img = torch.ones(1, 4, 4)
+img = conv(img)
+print(img)
+print(img.size())
+exit()
 
 
 
 img = torch.ones(3, 25, 25)
-vert_r = VerticalStackConvolutionR(c_in=9, c_out=9, kernel_size=3, mask_center=True)
+vert_r = HorizontalStackConvolutionR(c_in=9, c_out=9, kernel_size=3, mask_center=True)
 mask = vert_r.mask
 
 print("out: r")
