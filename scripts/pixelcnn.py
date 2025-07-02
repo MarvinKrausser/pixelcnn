@@ -82,22 +82,143 @@ class HorizontalStackConvolution(MaskedConvolution):
     def __init__(self, c_in, c_out, kernel_size=3, mask_center=False, **kwargs):
         # Mask out all pixels on the left. Note that our kernel has a size of 1
         # in height because we only look at the pixel in the same row.
-        mask = torch.ones(c_out, c_in, 1,kernel_size)
-        mask[:, :, 0, kernel_size//2+1:] = 0
+        mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
+        mask[:, :, :, kernel_size//2+1:] = 0
+        mask[:, :, :kernel_size // 2, :] = 0
+        mask[:, :, kernel_size // 2 + 1: , :] = 0
 
         if(not(c_in % 3 == 0) or not(c_out % 3 == 0)):
             raise Exception("Not divisible by 3")
 
         # For the very first convolution, we will also mask the center pixel
         if mask_center:
-            mask[                :c_out // 3      ,                :         , 0, kernel_size//2] = 0 #Out: r
-            mask[c_out // 3      :(c_out * 2) // 3,       c_in // 3:         , 0, kernel_size//2] = 0 #Out: g
-            mask[(c_out * 2) // 3:                , (c_in * 2) // 3:         , 0, kernel_size//2] = 0 #Out: b
+            mask[                :c_out // 3      ,                :         , :, kernel_size//2] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3,       c_in // 3:         , :, kernel_size//2] = 0 #Out: g
+            mask[(c_out * 2) // 3:                , (c_in * 2) // 3:         , :, kernel_size//2] = 0 #Out: b
         else:
-            mask[                :c_out // 3      ,       c_in // 3:         , 0, kernel_size//2] = 0 #Out: r
-            mask[c_out // 3      :(c_out * 2) // 3, (c_in * 2) // 3:         , 0, kernel_size//2] = 0 #Out: g
+            mask[                :c_out // 3      ,       c_in // 3:         , :, kernel_size//2] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3, (c_in * 2) // 3:         , :, kernel_size//2] = 0 #Out: g
 
         super().__init__(c_in, c_out, mask, **kwargs)
+
+class SimpleMaskedConvolution(MaskedConvolution):
+    def __init__(self, c_in, c_out, kernel_size=3, dilation=1, mask_center=False):
+        
+        mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
+        mask[:, :, kernel_size // 2 + 1:, :] = 0
+        mask[:, :, kernel_size // 2, kernel_size // 2 + 1:] = 0
+        if mask_center:
+            mask[                :c_out // 3      ,                :         , kernel_size//2, kernel_size//2] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3,       c_in // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: g
+            mask[(c_out * 2) // 3:                , (c_in * 2) // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: b
+        else:
+            mask[                :c_out // 3      ,       c_in // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3, (c_in * 2) // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: g
+        super().__init__(c_in=c_in, c_out=c_out, mask=mask, dilation=dilation)
+
+class SimpleVerticalStack(MaskedConvolution):
+    def __init__(self, c_in, c_out, kernel_size=3, dilation=1):
+        mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
+        mask[:, :, kernel_size//2+1:, :] = 0
+        super().__init__(c_in=c_in, c_out=c_out, mask=mask, dilation=dilation)
+
+class SimpleHorizontalStack(MaskedConvolution):
+    def __init__(self, c_in, c_out, kernel_size=3, dilation=1, mask_center=False):
+        mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
+        mask[:, :, :kernel_size//2, :] = 0
+        mask[:, :, kernel_size//2+1:, :] = 0
+        mask[:, :, :, kernel_size//2+1:] = 0
+
+        if mask_center:
+            mask[                :c_out // 3      ,                :         , kernel_size//2, kernel_size//2] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3,       c_in // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: g
+            mask[(c_out * 2) // 3:                , (c_in * 2) // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: b
+        else:
+            mask[                :c_out // 3      ,       c_in // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3, (c_in * 2) // 3:         , kernel_size//2, kernel_size//2] = 0 #Out: g
+
+        super().__init__(c_in=c_in, c_out=c_out, mask=mask, dilation=dilation)
+
+class SimpleGated(nn.Module):
+    def __init__(self, c_in, kernel_size, dilation=1):
+        super().__init__()
+        self.conv_ver = SimpleVerticalStack(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
+        self.conv_hor = SimpleHorizontalStack(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
+        self.conv_ver_to_hor = nn.Conv2d(in_channels=c_in*2, out_channels=c_in*2, kernel_size=1, padding=0)
+        self.conv_to_out = SimpleMaskedConvolution(c_in=c_in, c_out=c_in, kernel_size=1)
+        self.dropout = nn.Dropout2d(0.1)
+
+    def forward(self, x_hor, x_ver):
+        feat_ver = self.conv_ver(x_ver)
+        val, gate = self.split_val_gate_rgb(feat_ver)
+        feat_ver_out = torch.tanh(val) * torch.sigmoid(gate)
+
+        zero_row = torch.zeros((feat_ver.size(0), feat_ver.size(1), 1, feat_ver.size(3)), dtype=feat_ver.dtype, device=feat_ver.device)
+
+        feat_ver = feat_ver[:, :, :-1, :]
+
+        v_stack_shifted = torch.cat([zero_row, feat_ver], dim=2)
+
+        feat_hor = self.conv_hor(x_hor)
+        feat_hor = feat_hor + self.conv_ver_to_hor(v_stack_shifted)
+
+        val, gate = self.split_val_gate_rgb(feat_hor)
+        feat_hor_out = torch.tanh(val) * torch.sigmoid(gate)
+        feat_hor_out = self.dropout(feat_hor_out)
+        feat_hor_out = self.conv_to_out(feat_hor_out)
+        
+        return feat_hor_out, feat_ver_out
+    
+    def split_val_gate_rgb(self, tensor):
+        r, g, b = tensor.chunk(3, dim=1)
+        val_r, gate_r = r.chunk(2, dim=1)
+        val_g, gate_g = g.chunk(2, dim=1)
+        val_b, gate_b = b.chunk(2, dim=1)
+        val = torch.cat([val_r, val_g, val_b], dim=1)
+        gate = torch.cat([gate_r, gate_g, gate_b], dim=1)
+        return val, gate
+
+
+
+class SimplePixelCNN(nn.Module):
+    def __init__(self, input_channels, hidden_channels=66, kernel_size=3):
+        super().__init__()
+
+        self.conv_init_hor = SimpleHorizontalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=3, mask_center=True)
+        self.conv_init_ver = SimpleVerticalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=3)
+
+        self.layers = nn.ModuleList([
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size)
+        ])
+        self.conv_out = SimpleMaskedConvolution(c_in=hidden_channels, c_out=input_channels*256, kernel_size=1)
+
+
+    def forward(self, x):
+        x = (x.float() / 255.0) * 2 - 1
+        x_hor = self.conv_init_hor(x)
+        x_ver = self.conv_init_ver(x)
+
+        for layer in self.layers:
+            x_hor, x_ver = layer(x_hor, x_ver)
+
+        x = self.conv_out(x_hor)
+
+        # Output dimensions: [Batch, Classes, Channels, Height, Width]
+        x = x.reshape(x.shape[0], 256, x.shape[1]//256, x.shape[2], x.shape[3])
+        return x
+
+
+
 
 class GatedMaskedConv(nn.Module):
 
@@ -174,9 +295,7 @@ class PixelCNN(nn.Module):
             #GatedMaskedConvR(c_in=hidden_channels, kernel_size=kernel_size)
         ])
         
-        self.conv_out = nn.Conv2d(in_channels=hidden_channels, out_channels=input_channels * 256, kernel_size=1, padding=0)
-        nn.init.kaiming_normal_(self.conv_out.weight)
-        nn.init.zeros_(self.conv_out.bias)
+        self.conv_out = HorizontalStackConvolution(in_channels=hidden_channels, out_channels=input_channels * 256, kernel_size=1, mask_center=False)
 
     def forward(self, x):
         x = (x.float() / 255.0) * 2 - 1
@@ -194,34 +313,17 @@ class PixelCNN(nn.Module):
         return out
     
 def sample(model, img_shape, device, SAVE_PATH, mode_name, img=None):
-    """
-    Sampling function for the autoregressive model.
-    Inputs:
-        img_shape - Shape of the image to generate (B,C,H,W)
-        img (optional) - If given, this tensor will be used as
-                        a starting image. The pixels to fill
-                        should be -1 in the input tensor.
-    """
-
+    #img_shape(batch, channel, height, width)
     state_dict = torch.load(os.path.join(SAVE_PATH, mode_name), weights_only=False)
     model.load_state_dict(state_dict)
     model.eval()
-    
-    # Create empty image
-    if img is None:
-        img = torch.zeros(img_shape, dtype=torch.long).to(device) - 1
-    # Generation loop
-    for h in tqdm(range(img_shape[2]), leave=False):
+    img = torch.zeros(img_shape).to(device)
+    for h in tqdm(range(img_shape[2]), desc=f"Generating", leave=False):
         for w in range(img_shape[3]):
             for c in range(img_shape[1]):
-                # Skip if not to be filled (-1)
-                if (img[:,c,h,w] != -1).all().item():
-                    continue
-                # For efficiency, we only have to input the upper part of the image
-                # as all other parts will be skipped by the masked convolutions anyways
-                pred = model(img[:,:,:h+1,:])
-                probs = F.softmax(pred[:,:,c,h,w], dim=-1)
-                img[:,c,h,w] = torch.multinomial(probs, num_samples=1).squeeze(dim=-1)
+                pred = model(img)
+                pred = F.softmax(pred[:,:,c,h,w], dim=-1)
+                img[:,c,h,w] = torch.multinomial(pred, num_samples=1).squeeze(dim=-1)
     return img
 
 
@@ -243,10 +345,6 @@ def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_d
                 data_inputs = data_inputs.to(device)
 
                 preds = model(data_inputs)
-
-                preds = preds.permute(0, 2, 3, 4, 1)
-                preds = preds.reshape(-1, preds.size(4))
-                data_inputs = data_inputs.reshape(-1)
 
                 loss = loss_module(preds, data_inputs)
                 total_loss += loss.item() * data_inputs.numel()
@@ -276,10 +374,6 @@ def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_d
                     data_inputs = data_inputs.to(device)
 
                     preds = model(data_inputs)
-                    
-                    preds = preds.permute(0, 2, 3, 4, 1)
-                    preds = preds.reshape(-1, preds.size(4))
-                    data_inputs = data_inputs.reshape(-1)
 
                     loss = loss_module(preds, data_inputs)
                     total_loss += loss.item() * data_inputs.numel()
@@ -314,10 +408,6 @@ def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_d
             data_inputs = data_inputs.to(device)
 
             preds = model(data_inputs)
-
-            preds = preds.permute(0, 2, 3, 4, 1)
-            preds = preds.reshape(-1, preds.size(4))
-            data_inputs = data_inputs.reshape(-1)
 
             
             loss = loss_module(preds, data_inputs)
