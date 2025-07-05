@@ -29,17 +29,224 @@ import torchvision
 from torchvision.datasets import CIFAR10
 from torchvision import transforms
 
-from pixelcnn import GatedMaskedConv, SimpleHorizontalStack, SimpleMaskedConvolution, HorizontalStackConvolution, SimpleVerticalStack, VerticalStackConvolution
+from pixelcnn import GatedMaskedConv, SimpleGated, SimpleHorizontalStack, SimpleMaskedConvolution, HorizontalStackConvolution, SimpleVerticalStack, VerticalStackConvolution
 import matplotlib.pyplot as plt
 
-"""
-conv = nn.ConvTranspose2d(in_channels=1, out_channels=1, kernel_size=2, stride=1, padding=1)
-img = torch.ones(1, 4, 4)
-img = conv(img)
-print(img)
-print(img.size())
-exit()
-"""
+
+torch.set_grad_enabled(False)
+torch.set_printoptions(linewidth=200)
+
+device = torch.device("cpu") if not torch.cuda.is_available() else torch.device("cuda:0")
+print("Using device", device)
+
+
+conv = SimpleGated(c_in=3, kernel_size=3)
+conv.to(device)
+conv.eval()
+conv_hor_1 = SimpleHorizontalStack(c_in=3, c_out=3, kernel_size=3, mask_center=True)
+conv_hor_1.to(device)
+conv_hor_1.eval()
+
+conv_hor_2 = SimpleHorizontalStack(c_in=3, c_out=3, kernel_size=3, mask_center=False)
+conv_hor_2.to(device)
+conv_hor_2.eval()
+
+
+conv.conv_hor.conv.weight.fill_(1)
+conv.conv_hor.conv.bias.fill_(0)
+
+conv.conv_to_out.conv.weight.fill_(1)
+conv.conv_to_out.conv.bias.fill_(0)
+
+conv.conv_ver.conv.weight.fill_(1)
+conv.conv_ver.conv.bias.fill_(0)
+
+conv.conv_ver_to_hor.weight.fill_(1)
+conv.conv_ver_to_hor.bias.fill_(0)
+
+conv_hor_1.conv.weight.fill_(1)
+conv_hor_1.conv.bias.fill_(0)
+
+conv_hor_2.conv.weight.fill_(1)
+conv_hor_2.conv.bias.fill_(0)
+
+
+#horizontal check for successor
+image_list = []
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            image = torch.ones((1, 3, 9, 9), dtype=torch.float32, device=device)
+            image[:, :, h, :w] = 0
+            image[:, :c, h, w] = 0
+            image_list.append(image)
+
+image = torch.cat(image_list, dim=0)
+
+image = conv_hor_1(image)
+for _ in range(9):
+    image = conv_hor_2(image)
+
+counter = 0
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            if image[counter, c, h, w] != 0:
+                print(image[counter], c, h, w)
+                exit()
+            counter += 1
+if counter != image.size(0):
+    raise Exception("Not all images checked", counter, image.size(0))
+
+
+
+#horizontal check for predecessor
+image_list = []
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            for c_2 in range(3):
+                for w_2 in range(w):
+                    image = torch.zeros((1, 3, 9, 9), dtype=torch.float32, device=device)
+                    image[:, c_2, h, w_2] = 1
+                    image_list.append(image)
+
+            for c_2 in range(c):
+                image = torch.zeros((1, 3, 9, 9), dtype=torch.float32, device=device)
+                image[:, c_2, h, w] = 1
+                image_list.append(image)
+
+image = torch.cat(image_list, dim=0)
+
+image = conv_hor_1(image)
+for _ in range(9):
+    image = conv_hor_2(image)
+
+counter = 0
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            for c_2 in range(3):
+                for w_2 in range(w):
+                    if image[counter, c, h, w] == 0:
+                        print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w_2}")
+                        for c in range(3):
+                            print(f"Channel {c}:\n{image[counter][c]}\n")
+                        exit()
+                    counter += 1
+
+            for c_2 in range(c):
+                if image[counter, c, h, w] == 0:
+                    print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w}")
+                    for c in range(3):
+                        print(f"Channel {c}:\n{image[counter][c]}\n")
+                    exit()
+                counter += 1
+if counter != image.size(0):
+    raise Exception("Not all images checked", counter, image.size(0))
+
+
+#vertical check for successor
+image_list = []
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            image = torch.ones((1, 3, 9, 9), dtype=torch.float32, device=device)
+            image[:, :, :h, :] = 0
+            image[:, :, h, :w] = 0
+            image[:, :c+1, h, w] = 0
+            image_list.append(image)
+
+image = torch.cat(image_list, dim=0)
+
+zero_row = torch.zeros((image.size(0), image.size(1), 1, image.size(3)), dtype=image.dtype, device=image.device)
+
+v_stack_shifted = image[:, :, :-1, :]
+
+v_stack_shifted = torch.cat([zero_row, v_stack_shifted], dim=2)
+
+for _ in range(10):
+    image, v_stack_shifted = conv(image, v_stack_shifted)
+
+counter = 0
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            if image[counter, c, h, w] != 0:
+                print(image[counter], c, h, w)
+                exit()
+            counter += 1
+if counter != image.size(0):
+    raise Exception("Not all images checked", counter, image.size(0))
+
+
+
+#vertical check for predecessor
+image_list = []
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            for c_2 in range(3):
+                for h_2 in range(h):
+                    for w_2 in range(9):
+                        image = torch.zeros((1, 3, 9, 9), dtype=torch.float32, device=device)
+                        image[:, c_2, h_2, w_2] = 1
+                        image_list.append(image)
+
+            for c_2 in range(3):
+                for w_2 in range(w):
+                    image = torch.zeros((1, 3, 9, 9), dtype=torch.float32, device=device)
+                    image[:, c_2, h, w_2] = 1
+                    image_list.append(image)
+            
+            for c_2 in range(c+1):
+                image = torch.zeros((1, 3, 9, 9), dtype=torch.float32, device=device)
+                image[:, c_2, h, w] = 1
+                image_list.append(image)
+
+image = torch.cat(image_list, dim=0)
+
+zero_row = torch.zeros((image.size(0), image.size(1), 1, image.size(3)), dtype=image.dtype, device=image.device)
+
+v_stack_shifted = image[:, :, :-1, :]
+
+v_stack_shifted = torch.cat([zero_row, v_stack_shifted], dim=2)
+
+for _ in range(10):
+    image, v_stack_shifted = conv(image, v_stack_shifted)
+
+counter = 0
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            for c_2 in range(3):
+                for h_2 in range(h):
+                    for w_2 in range(9):
+                        if image[counter, c, h, w] == 0:
+                            print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h_2}, {w_2}")
+                            for c in range(3):
+                                print(f"Channel {c}:\n{image[counter][c]}\n")
+                            exit()
+                        counter += 1
+
+            for c_2 in range(3):
+                for w_2 in range(w):
+                    if image[counter, c, h, w] == 0:
+                        print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w_2}")
+                        for c in range(3):
+                            print(f"Channel {c}:\n{image[counter][c]}\n")
+                        exit()
+                    counter += 1
+                    
+            for c_2 in range(c+1):
+                if image[counter, c, h, w] == 0:
+                    print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w}")
+                    for c in range(3):
+                        print(f"Channel {c}:\n{image[counter][c]}\n")
+                    exit()
+                counter += 1
+if counter != image.size(0):
+    raise Exception("Not all images checked", counter, image.size(0))
 
 
 conv = SimpleMaskedConvolution(c_in=9, c_out=9, kernel_size=3, mask_center=True)

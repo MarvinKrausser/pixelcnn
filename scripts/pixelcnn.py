@@ -40,11 +40,6 @@ class MaskedConvolution(nn.Module):
         padding = tuple([dilation*(kernel_size[i]-1)//2 for i in range(2)])
         # Actual convolution
         self.conv = nn.Conv2d(c_in, c_out, kernel_size, padding=padding, dilation=dilation)
-        nn.init.xavier_uniform_(self.conv.weight)
-
-        initial_fn = nn.init.xavier_uniform_ if "initial_fn" not in kwargs else kwargs["initial_fn"]
-        initial_fn(self.conv.weight)
-        nn.init.zeros_(self.conv.bias)
 
         # Mask as buffer => it is no parameter but still a tensor of the module
         # (must be moved with the devices)
@@ -152,20 +147,17 @@ class SimpleGated(nn.Module):
         feat_ver = self.conv_ver(x_ver)
         val, gate = self.split_val_gate_rgb(feat_ver)
         feat_ver_out = torch.tanh(val) * torch.sigmoid(gate)
-
-        zero_row = torch.zeros((feat_ver.size(0), feat_ver.size(1), 1, feat_ver.size(3)), dtype=feat_ver.dtype, device=feat_ver.device)
-
-        feat_ver = feat_ver[:, :, :-1, :]
-
-        v_stack_shifted = torch.cat([zero_row, feat_ver], dim=2)
+        feat_ver_out = self.dropout(feat_ver_out)
 
         feat_hor = self.conv_hor(x_hor)
-        feat_hor = feat_hor + self.conv_ver_to_hor(v_stack_shifted)
+        feat_hor = feat_hor + self.conv_ver_to_hor(feat_ver)
 
         val, gate = self.split_val_gate_rgb(feat_hor)
         feat_hor_out = torch.tanh(val) * torch.sigmoid(gate)
         feat_hor_out = self.dropout(feat_hor_out)
         feat_hor_out = self.conv_to_out(feat_hor_out)
+
+        feat_hor_out = x_hor + feat_hor_out
         
         return feat_hor_out, feat_ver_out
     
@@ -177,6 +169,57 @@ class SimpleGated(nn.Module):
         val = torch.cat([val_r, val_g, val_b], dim=1)
         gate = torch.cat([gate_r, gate_g, gate_b], dim=1)
         return val, gate
+    
+class SimpleGatedNoStack(nn.Module):
+    def __init__(self, c_in, kernel_size, dilation=1):
+        super().__init__()
+        self.conv = SimpleMaskedConvolution(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
+        self.conv_to_out = SimpleMaskedConvolution(c_in=c_in, c_out=c_in, kernel_size=1)
+        self.dropout = nn.Dropout2d(0.1)
+
+    def forward(self, x):
+        feat = self.conv(x)
+        val, gate = self.split_val_gate_rgb(feat)
+        feat = torch.tanh(val) * torch.sigmoid(gate)
+        feat = self.dropout(feat)
+        feat = self.conv_to_out(feat)
+        feat = x + feat
+        return feat
+    
+    def split_val_gate_rgb(self, tensor):
+        r, g, b = tensor.chunk(3, dim=1)
+        val_r, gate_r = r.chunk(2, dim=1)
+        val_g, gate_g = g.chunk(2, dim=1)
+        val_b, gate_b = b.chunk(2, dim=1)
+        val = torch.cat([val_r, val_g, val_b], dim=1)
+        gate = torch.cat([gate_r, gate_g, gate_b], dim=1)
+        return val, gate
+    
+class SimplePixelCNNNoStack(nn.Module):
+    def __init__(self, input_channels, hidden_channels=66, kernel_size=3):
+        super().__init__()
+
+
+        self.layers = nn.Sequential(
+            SimpleMaskedConvolution(c_in=input_channels, c_out=hidden_channels, kernel_size=kernel_size),                              #3
+            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size),                                                         #5
+            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #9
+            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),                                             #17
+            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size),                                                         #19
+            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #23
+            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),                                             #31
+            SimpleMaskedConvolution(c_in=hidden_channels, c_out=input_channels*256, kernel_size=1)
+        )
+
+
+    def forward(self, x):
+        x = (x.float() / 255.0) * 2 - 1
+
+        x = self.layers(x)
+
+        # Output dimensions: [Batch, Classes, Channels, Height, Width]
+        x = x.reshape(x.shape[0], 256, x.shape[1]//256, x.shape[2], x.shape[3])
+        return x
 
 
 
@@ -184,29 +227,32 @@ class SimplePixelCNN(nn.Module):
     def __init__(self, input_channels, hidden_channels=66, kernel_size=3):
         super().__init__()
 
-        self.conv_init_hor = SimpleHorizontalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=3, mask_center=True)
-        self.conv_init_ver = SimpleVerticalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=3)
+        self.conv_init_hor = SimpleHorizontalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=kernel_size, mask_center=True) #2
+        self.conv_init_ver = SimpleVerticalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=kernel_size)
 
         self.layers = nn.ModuleList([
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size)
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=1),                                             #4
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #8
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),                                             #16
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=1),                                             #18
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #22
+            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4)                                              #30
         ])
+
         self.conv_out = SimpleMaskedConvolution(c_in=hidden_channels, c_out=input_channels*256, kernel_size=1)
 
 
     def forward(self, x):
         x = (x.float() / 255.0) * 2 - 1
+
+        zero_row = torch.zeros((x.size(0), x.size(1), 1, x.size(3)), dtype=x.dtype, device=x.device)
+
+        v_stack_shifted = x[:, :, :-1, :]
+
+        v_stack_shifted = torch.cat([zero_row, v_stack_shifted], dim=2)
+
         x_hor = self.conv_init_hor(x)
-        x_ver = self.conv_init_ver(x)
+        x_ver = self.conv_init_ver(v_stack_shifted)
 
         for layer in self.layers:
             x_hor, x_ver = layer(x_hor, x_ver)
@@ -312,36 +358,80 @@ class PixelCNN(nn.Module):
         out = out.reshape(out.shape[0], 256, out.shape[1]//256, out.shape[2], out.shape[3])
         return out
     
-def sample(model, img_shape, device, SAVE_PATH, mode_name, img=None):
+def sample(model, img_shape, device, SAVE_PATH, mode_name, img=None, temp=1):
     #img_shape(batch, channel, height, width)
     state_dict = torch.load(os.path.join(SAVE_PATH, mode_name), weights_only=False)
     model.load_state_dict(state_dict)
     model.eval()
-    img = torch.zeros(img_shape).to(device)
+    if img == None:
+        img = torch.zeros(img_shape).to(device)
+    else:
+        img = img.to(device)
     for h in tqdm(range(img_shape[2]), desc=f"Generating", leave=False):
         for w in range(img_shape[3]):
             for c in range(img_shape[1]):
                 pred = model(img)
+                pred = pred * temp
                 pred = F.softmax(pred[:,:,c,h,w], dim=-1)
                 img[:,c,h,w] = torch.multinomial(pred, num_samples=1).squeeze(dim=-1)
     return img
 
 
-def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_data_loader, test_data_loader, device, SAVE_PATH, num_epochs=10, train=True, folder_name = "test", model_name="test.tar"):
-
+def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_data_loader, device, SAVE_PATH, num_epochs=10, folder_name = "test", model_name="test.tar" , load_checkpoint=-1):
     best_loss = 10
+    if load_checkpoint >=0:
+        prefix = f"v{load_checkpoint}_" + model_name
+        for root, _, files in os.walk(os.path.join(SAVE_PATH, folder_name)):
+            for file in files:
+                if file.startswith(prefix):
+                    rest = file[len(prefix)+1:]
+                    best_loss = float(rest)
+                    print(best_loss)
+                    full_path = os.path.join(root, file)
+        state_dict = torch.load(full_path, weights_only=False)
+        model.load_state_dict(state_dict)
+        load_checkpoint += 1
+    else:
+        load_checkpoint = 0
 
-    if(train or not os.path.isfile(os.path.join(SAVE_PATH, model_name))):
+    for epoch in range(num_epochs):
+        saving = False
+        ############
+        # Training #
+        ############
+        total_loss = 0.0  # Track total loss for this epoch
+        model.train()
+        true_preds, count = 0., 0
+        for data_inputs, _ in tqdm(train_data_loader, desc=f"Train Epoch {epoch+1+load_checkpoint}", leave=False):
+            data_inputs = data_inputs.to(device)
 
-        for epoch in range(num_epochs):
-            saving = False
-            ############
-            # Training #
-            ############
-            total_loss = 0.0  # Track total loss for this epoch
-            model.train()
-            true_preds, count = 0., 0
-            for data_inputs, _ in tqdm(train_data_loader, desc=f"Train Epoch {epoch+1}", leave=False):
+            preds = model(data_inputs)
+
+            loss = loss_module(preds, data_inputs)
+            total_loss += loss.item() * data_inputs.numel()
+
+            optimizer.zero_grad()
+
+            loss.backward()
+
+            optimizer.step()
+
+            true_preds += (preds.argmax(dim=1) == data_inputs).sum().item()
+            count += data_inputs.numel()
+        train_acc = true_preds / count
+        avg_loss_train = total_loss / count
+
+        torch.cuda.empty_cache()
+
+        ##############
+        # Validation #
+        ##############
+        model.eval()
+
+        total_loss = 0.0
+        true_preds, count = 0., 0
+        for data_inputs, _ in tqdm(validation_data_loader, desc=f"Validate Epoch {epoch+1+load_checkpoint}", leave=False):
+            with torch.no_grad():
                 data_inputs = data_inputs.to(device)
 
                 preds = model(data_inputs)
@@ -349,72 +439,15 @@ def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_d
                 loss = loss_module(preds, data_inputs)
                 total_loss += loss.item() * data_inputs.numel()
 
-                optimizer.zero_grad()
-
-                loss.backward()
-
-                optimizer.step()
-
                 true_preds += (preds.argmax(dim=1) == data_inputs).sum().item()
                 count += data_inputs.numel()
-            train_acc = true_preds / count
-            avg_loss_train = total_loss / count
+        val_acc = true_preds / count
+        avg_loss_val = total_loss / count
 
-            torch.cuda.empty_cache()
+        if(best_loss > avg_loss_val):
+            best_loss = avg_loss_val
+            saving = True
+            torch.save(model.state_dict(), os.path.join(SAVE_PATH, folder_name, f"v{epoch+load_checkpoint}_" + model_name + f"_{best_loss}"))
 
-            ##############
-            # Validation #
-            ##############
-            model.eval()
-
-            total_loss = 0.0
-            true_preds, count = 0., 0
-            for data_inputs, _ in tqdm(validation_data_loader, desc=f"Validate Epoch {epoch+1}", leave=False):
-                with torch.no_grad():
-                    data_inputs = data_inputs.to(device)
-
-                    preds = model(data_inputs)
-
-                    loss = loss_module(preds, data_inputs)
-                    total_loss += loss.item() * data_inputs.numel()
-
-                    true_preds += (preds.argmax(dim=1) == data_inputs).sum().item()
-                    count += data_inputs.numel()
-            val_acc = true_preds / count
-            avg_loss_val = total_loss / count
-
-            if(best_loss > avg_loss_val):
-                best_loss = avg_loss_val
-                saving = True
-                torch.save(model.state_dict(), os.path.join(SAVE_PATH, folder_name, f"v{epoch}_" + model_name))
-
-            print(f"epoch: {epoch+1} | train accuracy: {int(train_acc * 1000) / 10}% | train loss: {int(avg_loss_train * 1000) / 1000} | validation loss: {int(avg_loss_val * 1000) / 1000} | validation accuracy: {int(val_acc * 1000) / 10}% | saving: {saving}")
-            torch.cuda.empty_cache()
-
-
-    ###########
-    # Testing #
-    ###########
-
-    state_dict = torch.load(os.path.join(SAVE_PATH, "gen_CIFAR", "v25_gen_CIFAR.tar"), weights_only=False)
-    model.load_state_dict(state_dict)
-
-    model.eval()
-
-    total_loss = 0.0
-    true_preds, count = 0., 0
-    for data_inputs, _ in tqdm(test_data_loader, desc=f"Test", leave=False):
-        with torch.no_grad():
-            data_inputs = data_inputs.to(device)
-
-            preds = model(data_inputs)
-
-            
-            loss = loss_module(preds, data_inputs)
-            total_loss += loss.item() * data_inputs.numel()
-
-            true_preds += (preds.argmax(dim=1) == data_inputs).sum().item()
-            count += data_inputs.numel()
-    test_acc = true_preds / count
-    avg_loss_test = total_loss / count
-    print(f"test accuracy: {int(test_acc * 1000) / 10}% | test loss: {int(avg_loss_test * 1000) / 1000} | best validation loss: {int(best_loss * 1000) / 1000}")
+        print(f"epoch: {epoch+1+load_checkpoint} | train accuracy: {int(train_acc * 1000) / 10}% | train loss: {int(avg_loss_train * 1000) / 1000} | validation loss: {int(avg_loss_val * 1000) / 1000} | validation accuracy: {int(val_acc * 1000) / 10}% | saving: {saving}")
+        torch.cuda.empty_cache()
