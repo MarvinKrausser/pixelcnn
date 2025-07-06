@@ -37,17 +37,17 @@ class MaskedConvolution(nn.Module):
         else:
             kernel_size = (mask.shape[2], mask.shape[3])
         dilation = 1 if "dilation" not in kwargs else kwargs["dilation"]
-        padding = tuple([dilation*(kernel_size[i]-1)//2 for i in range(2)])
+        padding = dilation*(kernel_size[0]//2)
         # Actual convolution
         self.conv = nn.Conv2d(c_in, c_out, kernel_size, padding=padding, dilation=dilation)
 
         # Mask as buffer => it is no parameter but still a tensor of the module
         # (must be moved with the devices)
-        self.register_buffer('mask', mask)
+        self.register_buffer('mask', mask.clone())
 
 
     def forward(self, x):
-        self.conv.weight.data *= self.mask # Ensures zero's at masked positions
+        self.conv.weight.data *= self.mask.to(self.conv.weight.device)
         return self.conv(x)
     
 class VerticalStackConvolution(MaskedConvolution):
@@ -148,7 +148,6 @@ class SimpleGated(nn.Module):
         val, gate = self.split_val_gate_rgb(feat_ver)
         feat_ver_out = torch.tanh(val) * torch.sigmoid(gate)
         feat_ver_out = self.dropout(feat_ver_out)
-
         feat_hor = self.conv_hor(x_hor)
         feat_hor = feat_hor + self.conv_ver_to_hor(feat_ver)
 
@@ -170,57 +169,6 @@ class SimpleGated(nn.Module):
         gate = torch.cat([gate_r, gate_g, gate_b], dim=1)
         return val, gate
     
-class SimpleGatedNoStack(nn.Module):
-    def __init__(self, c_in, kernel_size, dilation=1):
-        super().__init__()
-        self.conv = SimpleMaskedConvolution(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
-        self.conv_to_out = SimpleMaskedConvolution(c_in=c_in, c_out=c_in, kernel_size=1)
-        self.dropout = nn.Dropout2d(0.1)
-
-    def forward(self, x):
-        feat = self.conv(x)
-        val, gate = self.split_val_gate_rgb(feat)
-        feat = torch.tanh(val) * torch.sigmoid(gate)
-        feat = self.dropout(feat)
-        feat = self.conv_to_out(feat)
-        feat = x + feat
-        return feat
-    
-    def split_val_gate_rgb(self, tensor):
-        r, g, b = tensor.chunk(3, dim=1)
-        val_r, gate_r = r.chunk(2, dim=1)
-        val_g, gate_g = g.chunk(2, dim=1)
-        val_b, gate_b = b.chunk(2, dim=1)
-        val = torch.cat([val_r, val_g, val_b], dim=1)
-        gate = torch.cat([gate_r, gate_g, gate_b], dim=1)
-        return val, gate
-    
-class SimplePixelCNNNoStack(nn.Module):
-    def __init__(self, input_channels, hidden_channels=66, kernel_size=3):
-        super().__init__()
-
-
-        self.layers = nn.Sequential(
-            SimpleMaskedConvolution(c_in=input_channels, c_out=hidden_channels, kernel_size=kernel_size),                              #3
-            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size),                                                         #5
-            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #9
-            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),                                             #17
-            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size),                                                         #19
-            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #23
-            SimpleGatedNoStack(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),                                             #31
-            SimpleMaskedConvolution(c_in=hidden_channels, c_out=input_channels*256, kernel_size=1)
-        )
-
-
-    def forward(self, x):
-        x = (x.float() / 255.0) * 2 - 1
-
-        x = self.layers(x)
-
-        # Output dimensions: [Batch, Classes, Channels, Height, Width]
-        x = x.reshape(x.shape[0], 256, x.shape[1]//256, x.shape[2], x.shape[3])
-        return x
-
 
 
 class SimplePixelCNN(nn.Module):
@@ -241,10 +189,11 @@ class SimplePixelCNN(nn.Module):
 
         self.conv_out = SimpleMaskedConvolution(c_in=hidden_channels, c_out=input_channels*256, kernel_size=1)
 
-
     def forward(self, x):
         x = (x.float() / 255.0) * 2 - 1
+        return self.calculate(x)
 
+    def calculate(self, x):
         zero_row = torch.zeros((x.size(0), x.size(1), 1, x.size(3)), dtype=x.dtype, device=x.device)
 
         v_stack_shifted = x[:, :, :-1, :]
@@ -256,11 +205,15 @@ class SimplePixelCNN(nn.Module):
 
         for layer in self.layers:
             x_hor, x_ver = layer(x_hor, x_ver)
-
         x = self.conv_out(x_hor)
 
+        r, g, b = x.chunk(3, dim=1)
+        r = r.unsqueeze(2)
+        g = g.unsqueeze(2)
+        b = b.unsqueeze(2)
+
         # Output dimensions: [Batch, Classes, Channels, Height, Width]
-        x = x.reshape(x.shape[0], 256, x.shape[1]//256, x.shape[2], x.shape[3])
+        x = torch.cat([r, g, b], dim=2)
         return x
 
 
@@ -372,7 +325,7 @@ def sample(model, img_shape, device, SAVE_PATH, mode_name, img=None, temp=1):
             for c in range(img_shape[1]):
                 pred = model(img)
                 pred = pred * temp
-                pred = F.softmax(pred[:,:,c,h,w], dim=-1)
+                pred = F.softmax(pred[:,:,c,h,w], dim=1)
                 img[:,c,h,w] = torch.multinomial(pred, num_samples=1).squeeze(dim=-1)
     return img
 
@@ -386,7 +339,7 @@ def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_d
                 if file.startswith(prefix):
                     rest = file[len(prefix)+1:]
                     best_loss = float(rest)
-                    print(best_loss)
+                    print(f"Checkpoint loss: {best_loss}")
                     full_path = os.path.join(root, file)
         state_dict = torch.load(full_path, weights_only=False)
         model.load_state_dict(state_dict)

@@ -30,7 +30,7 @@ import torchvision
 from torchvision.datasets import CIFAR10, MNIST
 from torchvision import transforms
 
-from pixelcnn import PixelCNN, SimplePixelCNN, SimplePixelCNNNoStack, trainPixelCNN, sample
+from pixelcnn import PixelCNN, SimplePixelCNN, trainPixelCNN, sample
 import matplotlib.pyplot as plt
 
 
@@ -99,7 +99,7 @@ exit()
 
 #best: 0.75
 trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, validation_data_loader=val_loader, 
-              device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_CIFAR", folder_name="gen_CIFAR", load_checkpoint=-1)
+              device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_CIFAR", folder_name="gen_CIFAR", load_checkpoint=4)
 
 
 

@@ -14,6 +14,7 @@ from matplotlib_inline.backend_inline import set_matplotlib_formats
 set_matplotlib_formats('svg', 'pdf') # For export
 from matplotlib.colors import to_rgb
 import seaborn as sns
+from itertools import product
 
 ## Progress bar
 from tqdm import tqdm
@@ -29,15 +30,148 @@ import torchvision
 from torchvision.datasets import CIFAR10
 from torchvision import transforms
 
-from pixelcnn import GatedMaskedConv, SimpleGated, SimpleHorizontalStack, SimpleMaskedConvolution, HorizontalStackConvolution, SimpleVerticalStack, VerticalStackConvolution
+from pixelcnn import GatedMaskedConv, SimpleGated, SimpleHorizontalStack, SimpleMaskedConvolution, HorizontalStackConvolution, SimplePixelCNN, SimpleVerticalStack, VerticalStackConvolution
 import matplotlib.pyplot as plt
 
 
 torch.set_grad_enabled(False)
-torch.set_printoptions(linewidth=200)
+torch.set_printoptions(linewidth=500)
+
+torch.manual_seed(3)
+torch.cuda.manual_seed_all(3)
 
 device = torch.device("cpu") if not torch.cuda.is_available() else torch.device("cuda:0")
 print("Using device", device)
+
+pixelcnn = SimplePixelCNN(input_channels=3, hidden_channels=9, kernel_size=3)
+pixelcnn.to(device)
+pixelcnn.eval()
+pixelcnn.double()
+
+pixelcnn.conv_init_hor.conv.weight.fill_(1)
+pixelcnn.conv_init_hor.conv.bias.fill_(0)
+
+pixelcnn.conv_init_ver.conv.weight.fill_(1)
+pixelcnn.conv_init_ver.conv.bias.fill_(0)
+
+pixelcnn.conv_out.conv.weight.fill_(1)
+pixelcnn.conv_out.conv.bias.fill_(0)
+
+for layer in pixelcnn.layers:
+    layer.conv_hor.conv.weight.fill_(1)
+    layer.conv_hor.conv.bias.fill_(0)
+
+    layer.conv_to_out.conv.weight.fill_(1)
+    layer.conv_to_out.conv.bias.fill_(0)
+
+    layer.conv_ver.conv.weight.fill_(1)
+    layer.conv_ver.conv.bias.fill_(0)
+
+    layer.conv_ver_to_hor.weight.fill_(1)
+    layer.conv_ver_to_hor.bias.fill_(0)
+
+
+
+#pixelcnn check for successor
+image_list = []
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            image = torch.ones((1, 3, 9, 9), dtype=torch.float64, device=device)
+            image[:, :, :h, :] = 0
+            image[:, :, h, :w] = 0
+            image[:, :c, h, w] = 0
+            image_list.append(image)
+
+image = torch.cat(image_list, dim=0)
+
+batches = torch.split(image, 20, dim=0)
+image_list = [pixelcnn.calculate(batch) for batch in batches]
+
+image = torch.cat(image_list, dim=0)
+
+counter = 0
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            for cl in range(256):
+                if image[counter, cl, c, h, w] != 0:
+                    print(cl, c, h, w)
+                    print(image[counter].size())
+                    print(counter)
+                    for c in range(3):
+                        print(f"Channel {c}:\n{image[counter, cl][c]}\n")
+            counter += 1
+if counter != image.size(0):
+    raise Exception("Not all images checked", counter, image.size(0))
+
+
+#pixelcnn check for predecessor
+image_list = []
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            for c_2 in range(3):
+                for h_2 in range(h):
+                    for w_2 in range(9):
+                        image = torch.zeros((1, 3, 9, 9), dtype=torch.float64, device=device)
+                        image[:, c_2, h_2, w_2] = 1
+                        image_list.append(image)
+
+            for c_2 in range(3):
+                for w_2 in range(w):
+                    image = torch.zeros((1, 3, 9, 9), dtype=torch.float64, device=device)
+                    image[:, c_2, h, w_2] = 1
+                    image_list.append(image)
+            
+            for c_2 in range(c):
+                image = torch.zeros((1, 3, 9, 9), dtype=torch.float64, device=device)
+                image[:, c_2, h, w] = 1
+                image_list.append(image)
+
+image = torch.cat(image_list, dim=0)
+
+batches = torch.split(image, 20, dim=0)
+
+image_list = []
+for batch in batches:
+    pred = pixelcnn.calculate(batch)
+    pred = pred.prod(dim=1)
+    image_list.append(pred)
+
+image = torch.cat(image_list, dim=0)
+
+counter = 0
+for c in range(3):
+    for h in range(9):
+        for w in range(9):
+            for c_2 in range(3):
+                for h_2 in range(h):
+                    for w_2 in range(9):
+                        if image[counter, c, h, w] == 0:
+                            print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h_2}, {w_2}")
+                            for c in range(3):
+                                print(f"Channel {c}:\n{image[counter][c]}\n")
+                        counter += 1
+
+            for c_2 in range(3):
+                for w_2 in range(w):
+                    if image[counter, c, h, w] == 0:
+                        print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w_2}")
+                        for c in range(3):
+                            print(f"Channel {c}:\n{image[counter][c]}\n")
+                    counter += 1
+                    
+            for c_2 in range(c):
+                if image[counter, c, h, w] == 0:
+                    print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w}")
+                    for c in range(3):
+                        print(f"Channel {c}:\n{image[counter][c]}\n")
+                counter += 1
+if counter != image.size(0):
+    raise Exception("Not all images checked", counter, image.size(0))
+
+
 
 
 conv = SimpleGated(c_in=3, kernel_size=3)
@@ -93,7 +227,6 @@ for c in range(3):
         for w in range(9):
             if image[counter, c, h, w] != 0:
                 print(image[counter], c, h, w)
-                exit()
             counter += 1
 if counter != image.size(0):
     raise Exception("Not all images checked", counter, image.size(0))
@@ -132,7 +265,6 @@ for c in range(3):
                         print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w_2}")
                         for c in range(3):
                             print(f"Channel {c}:\n{image[counter][c]}\n")
-                        exit()
                     counter += 1
 
             for c_2 in range(c):
@@ -140,13 +272,12 @@ for c in range(3):
                     print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w}")
                     for c in range(3):
                         print(f"Channel {c}:\n{image[counter][c]}\n")
-                    exit()
                 counter += 1
 if counter != image.size(0):
     raise Exception("Not all images checked", counter, image.size(0))
 
 
-#vertical check for successor
+#gated check for successor
 image_list = []
 for c in range(3):
     for h in range(9):
@@ -174,14 +305,13 @@ for c in range(3):
         for w in range(9):
             if image[counter, c, h, w] != 0:
                 print(image[counter], c, h, w)
-                exit()
             counter += 1
 if counter != image.size(0):
     raise Exception("Not all images checked", counter, image.size(0))
 
 
 
-#vertical check for predecessor
+#gated check for predecessor
 image_list = []
 for c in range(3):
     for h in range(9):
@@ -226,7 +356,6 @@ for c in range(3):
                             print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h_2}, {w_2}")
                             for c in range(3):
                                 print(f"Channel {c}:\n{image[counter][c]}\n")
-                            exit()
                         counter += 1
 
             for c_2 in range(3):
@@ -235,7 +364,6 @@ for c in range(3):
                         print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w_2}")
                         for c in range(3):
                             print(f"Channel {c}:\n{image[counter][c]}\n")
-                        exit()
                     counter += 1
                     
             for c_2 in range(c+1):
@@ -243,7 +371,6 @@ for c in range(3):
                     print(f"center: {c}, {h}, {w} | predecessor: {c_2}, {h}, {w}")
                     for c in range(3):
                         print(f"Channel {c}:\n{image[counter][c]}\n")
-                    exit()
                 counter += 1
 if counter != image.size(0):
     raise Exception("Not all images checked", counter, image.size(0))
@@ -252,6 +379,7 @@ if counter != image.size(0):
 conv = SimpleMaskedConvolution(c_in=9, c_out=9, kernel_size=3, mask_center=True)
 mask = conv.mask
 
+print("SimpleMaskedConvolution Masked")
 for output in mask[:3]:
     for input in output[:3]:
         if not torch.equal(input, torch.tensor([[1, 1, 1], [1, 0, 0], [0, 0, 0]]).float()):
@@ -295,6 +423,7 @@ for output in mask[6:9]:
 conv = SimpleMaskedConvolution(c_in=9, c_out=9, kernel_size=3, mask_center=False)
 mask = conv.mask
 
+print("SimpleMaskedConvolution")
 for output in mask[:3]:
     for input in output[:3]:
         if not torch.equal(input, torch.tensor([[1, 1, 1], [1, 1, 0], [0, 0, 0]]).float()):
@@ -338,6 +467,7 @@ for output in mask[6:9]:
 conv = SimpleVerticalStack(c_in=9, c_out=9, kernel_size=3)
 mask = conv.mask
 
+print("SimpleVerticalStack")
 for output in mask:
     for input in output:
         if not torch.equal(input, torch.tensor([[1, 1, 1], [1, 1, 1], [0, 0, 0]]).float()):
@@ -346,6 +476,7 @@ for output in mask:
 conv = SimpleHorizontalStack(c_in=9, c_out=9, kernel_size=3, mask_center=False)
 mask = conv.mask
 
+print("SimpleHorizontalStack")
 for output in mask[:3]:
     for input in output[:3]:
         if not torch.equal(input, torch.tensor([[0, 0, 0], [1, 1, 0], [0, 0, 0]]).float()):
@@ -389,6 +520,7 @@ for output in mask[6:9]:
 conv = SimpleHorizontalStack(c_in=9, c_out=9, kernel_size=3, mask_center=True)
 mask = conv.mask
 
+print("SimpleHorizontalStack Masked")
 for output in mask[:3]:
     for input in output[:3]:
         if not torch.equal(input, torch.tensor([[0, 0, 0], [1, 0, 0], [0, 0, 0]]).float()):
@@ -428,3 +560,5 @@ for output in mask[6:9]:
     for input in output[6:]:
         if not torch.equal(input, torch.tensor([[0, 0, 0], [1, 0, 0], [0, 0, 0]]).float()):
             print(f"{input}: out: b | in: b")
+
+print("done")
