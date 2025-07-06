@@ -70,8 +70,6 @@ for layer in pixelcnn.layers:
     layer.conv_ver_to_hor.weight.fill_(1)
     layer.conv_ver_to_hor.bias.fill_(0)
 
-
-
 #pixelcnn check for successor
 image_list = []
 for c in range(3):

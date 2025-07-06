@@ -400,7 +400,11 @@ def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_d
         if(best_loss > avg_loss_val):
             best_loss = avg_loss_val
             saving = True
-            torch.save(model.state_dict(), os.path.join(SAVE_PATH, folder_name, f"v{epoch+load_checkpoint}_" + model_name + f"_{best_loss}"))
+            save_dir = os.path.join(SAVE_PATH, folder_name)
+            os.makedirs(save_dir, exist_ok=True)
+
+            save_path = os.path.join(save_dir, f"v{epoch+load_checkpoint}_" + model_name + f"_{best_loss}")
+            torch.save(model.state_dict(), save_path)
 
         print(f"epoch: {epoch+1+load_checkpoint} | train accuracy: {int(train_acc * 1000) / 10}% | train loss: {int(avg_loss_train * 1000) / 1000} | validation loss: {int(avg_loss_val * 1000) / 1000} | validation accuracy: {int(val_acc * 1000) / 10}% | saving: {saving}")
         torch.cuda.empty_cache()
