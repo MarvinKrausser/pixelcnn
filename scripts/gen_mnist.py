@@ -6,7 +6,8 @@ import numpy as np
 ## Imports for plotting
 import matplotlib.pyplot as plt
 
-from utils import show_imgs
+from model import DIYPixelCNNGray
+from utils import show_imgs, show_tensor_images
 
 plt.set_cmap('cividis')
 #%matplotlib inline
@@ -26,11 +27,10 @@ import torch.utils.data as data
 import torch.optim as optim
 # Torchvision
 import torchvision
-from torchvision.datasets import MNIST
-from torchvision.datasets import FashionMNIST
+from torchvision.datasets import CIFAR10, MNIST
 from torchvision import transforms
 
-from model import DIYPixelCNNGray, sample, trainPixelCNNGray
+from pixelcnn import PixelCNN, SimplePixelCNN, trainPixelCNN, sample
 import matplotlib.pyplot as plt
 
 
@@ -40,37 +40,35 @@ DATASET_PATH = "../data"
 SAVE_PATH = "../saved_models"
 
 device = torch.device("cpu") if not torch.cuda.is_available() else torch.device("cuda:0")
-print("Using device", device)              # return as float images
+print("Using device", device)
+
+
+# 2. Model, optimiser, loss
+model = SimplePixelCNN(input_channels=3, hidden_channels=30, kernel_size=3, dilation_pattern=[1,1,2,2,   1,2,4,4,  1,2,4,4,   1,1,1])
+model.to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+loss_module = nn.CrossEntropyLoss()
 
 # Convert images from 0-1 to 0-255 (integers). We use the long datatype as we will use the images as labels as well
 def discretize(sample):
     return (sample * 255).to(torch.long)
 
 # Transformations applied on each image => only make them a tensor
-transform = transforms.Compose([transforms.ToTensor(),
+transform = transforms.Compose([transforms.Grayscale(num_output_channels=3),
+                                transforms.ToTensor(),
                                 discretize])
 
-train_dataset = MNIST(root=DATASET_PATH, train=True, transform=transform, download=True)
-train_set, val_set= torch.utils.data.random_split(train_dataset, [50000, 10000])
+train_set = MNIST(root=DATASET_PATH, train=True, transform=transform, download=True)
 
 # Loading the test set
-test_set = MNIST(root=DATASET_PATH, train=False, transform=transform, download=True)
+val_set = MNIST(root=DATASET_PATH, train=False, transform=transform, download=True)
 
 # We define a set of data loaders that we can use for various purposes later.
 train_loader = data.DataLoader(train_set, batch_size=128, shuffle=True, drop_last=False, pin_memory=True, num_workers=0)
 val_loader = data.DataLoader(val_set, batch_size=128, shuffle=False, drop_last=False, num_workers=0)
-test_loader = data.DataLoader(test_set, batch_size=128, shuffle=False, drop_last=False, num_workers=0)
 
-# 2. Model, optimiser, loss
-model = DIYPixelCNNGray()
-model.to(device)
-optimizer    = torch.optim.Adam(model.parameters(), lr=1e-3)
-loss_module = nn.CrossEntropyLoss()
+#show_imgs(sample(model, [4, 3, 32, 32], device, model_name="v81_gen_CIFAR", folder="gen_CIFAR", SAVE_PATH=SAVE_PATH, temp=1e-5))
+#exit()
 
-
-show_imgs(sample(model, [12, 1, 28, 28], device, mode_name=os.path.join("gen_mnist", "v55_gen_mnist.tar"), SAVE_PATH=SAVE_PATH))
-exit()
-
-trainPixelCNNGray(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, test_data_loader=test_loader, 
-              validation_data_loader=val_loader, device=device, SAVE_PATH=SAVE_PATH, num_epochs=100, model_name="gen_mnist.tar", folder_name="gen_mnist", train=True)
-
+trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, validation_data_loader=val_loader, 
+              device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_mnist", folder_name="gen_mnist", load_checkpoint=-1)

@@ -147,7 +147,7 @@ class SimpleGated(nn.Module):
         feat_ver = self.conv_ver(x_ver)
         val, gate = self.split_val_gate_rgb(feat_ver)
         feat_ver_out = torch.tanh(val) * torch.sigmoid(gate)
-        feat_ver_out = self.dropout(feat_ver_out)
+
         feat_hor = self.conv_hor(x_hor)
         feat_hor = feat_hor + self.conv_ver_to_hor(feat_ver)
 
@@ -172,20 +172,16 @@ class SimpleGated(nn.Module):
 
 
 class SimplePixelCNN(nn.Module):
-    def __init__(self, input_channels, hidden_channels=66, kernel_size=3):
+    def __init__(self, input_channels, dilation_pattern, hidden_channels=66, kernel_size=3):
         super().__init__()
 
-        self.conv_init_hor = SimpleHorizontalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=kernel_size, mask_center=True) #2
-        self.conv_init_ver = SimpleVerticalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=kernel_size)
+        self.conv_init_hor = SimpleHorizontalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=7, mask_center=True) #2
+        self.conv_init_ver = SimpleVerticalStack(c_in=input_channels, c_out=hidden_channels, kernel_size=7)
 
-        self.layers = nn.ModuleList([
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=1),                                             #4
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #8
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4),                                             #16
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=1),                                             #18
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=2),                                             #22
-            SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=4)                                              #30
-        ])
+        self.layers = nn.ModuleList()
+
+        for pattern in dilation_pattern:
+            self.layers.append(SimpleGated(c_in=hidden_channels, kernel_size=kernel_size, dilation=pattern))
 
         self.conv_out = SimpleMaskedConvolution(c_in=hidden_channels, c_out=input_channels*256, kernel_size=1)
 
@@ -215,8 +211,6 @@ class SimplePixelCNN(nn.Module):
         # Output dimensions: [Batch, Classes, Channels, Height, Width]
         x = torch.cat([r, g, b], dim=2)
         return x
-
-
 
 
 class GatedMaskedConv(nn.Module):
@@ -311,13 +305,17 @@ class PixelCNN(nn.Module):
         out = out.reshape(out.shape[0], 256, out.shape[1]//256, out.shape[2], out.shape[3])
         return out
     
-def sample(model, img_shape, device, SAVE_PATH, mode_name, img=None, temp=1):
+def sample(model, img_shape, device, SAVE_PATH, model_name, folder, img=None, temp=1):
     #img_shape(batch, channel, height, width)
-    state_dict = torch.load(os.path.join(SAVE_PATH, mode_name), weights_only=False)
+    for root, _, files in os.walk(os.path.join(SAVE_PATH, folder)):
+        for file in files:
+            if file.startswith(model_name):
+                full_path = os.path.join(root, file)
+    state_dict = torch.load(full_path, weights_only=False)
     model.load_state_dict(state_dict)
     model.eval()
     if img == None:
-        img = torch.zeros(img_shape).to(device)
+        img = torch.zeros(img_shape, device=device, dtype=torch.float32)
     else:
         img = img.to(device)
     for h in tqdm(range(img_shape[2]), desc=f"Generating", leave=False):
@@ -327,7 +325,7 @@ def sample(model, img_shape, device, SAVE_PATH, mode_name, img=None, temp=1):
                 pred = pred * temp
                 pred = F.softmax(pred[:,:,c,h,w], dim=1)
                 img[:,c,h,w] = torch.multinomial(pred, num_samples=1).squeeze(dim=-1)
-    return img
+    return img.int()
 
 
 def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_data_loader, device, SAVE_PATH, num_epochs=10, folder_name = "test", model_name="test.tar" , load_checkpoint=-1):

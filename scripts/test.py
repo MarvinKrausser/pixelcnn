@@ -35,7 +35,7 @@ import matplotlib.pyplot as plt
 
 
 torch.set_grad_enabled(False)
-torch.set_printoptions(linewidth=500)
+torch.set_printoptions(linewidth=200, profile="full")
 
 torch.manual_seed(3)
 torch.cuda.manual_seed_all(3)
@@ -43,32 +43,77 @@ torch.cuda.manual_seed_all(3)
 device = torch.device("cpu") if not torch.cuda.is_available() else torch.device("cuda:0")
 print("Using device", device)
 
-pixelcnn = SimplePixelCNN(input_channels=3, hidden_channels=9, kernel_size=3)
+def init_pixelcnn(pixelcnn):
+    pixelcnn.conv_init_hor.conv.weight.data.fill_(10)
+    pixelcnn.conv_init_hor.conv.bias.data.fill_(0)
+
+    pixelcnn.conv_init_ver.conv.weight.data.fill_(10)
+    pixelcnn.conv_init_ver.conv.bias.data.fill_(0)
+
+    pixelcnn.conv_out.conv.weight.data.fill_(10)
+    pixelcnn.conv_out.conv.bias.data.fill_(0)
+
+    for layer in pixelcnn.layers:
+        layer.conv_hor.conv.weight.data.fill_(10)
+        layer.conv_hor.conv.bias.data.fill_(0)
+
+        layer.conv_to_out.conv.weight.data.fill_(10)
+        layer.conv_to_out.conv.bias.data.fill_(0)
+
+        layer.conv_ver.conv.weight.data.fill_(10)
+        layer.conv_ver.conv.bias.data.fill_(0)
+
+        layer.conv_ver_to_hor.weight.data.fill_(10)
+        layer.conv_ver_to_hor.bias.data.fill_(0)
+
+    return pixelcnn
+
+pixelcnn = SimplePixelCNN(input_channels=3, hidden_channels=9, kernel_size=3, dilation_pattern=[1,1,2,2,   1,2,4,4,  1,2,4,4,   1,1,1])
 pixelcnn.to(device)
 pixelcnn.eval()
 pixelcnn.double()
+pixelcnn = init_pixelcnn(pixelcnn)
 
-pixelcnn.conv_init_hor.conv.weight.fill_(1)
-pixelcnn.conv_init_hor.conv.bias.fill_(0)
 
-pixelcnn.conv_init_ver.conv.weight.fill_(1)
-pixelcnn.conv_init_ver.conv.bias.fill_(0)
+torch.set_grad_enabled(True)
+img = torch.full([1, 3, 32, 32], dtype=torch.float32, device=device, fill_value=100)
+img.requires_grad_(True)
 
-pixelcnn.conv_out.conv.weight.fill_(1)
-pixelcnn.conv_out.conv.bias.fill_(0)
+model = SimplePixelCNN(input_channels=3, hidden_channels=129, kernel_size=3, dilation_pattern=[1,1,2,2,   1,2,4,4,  1,2,4,4,   1,1,1])
+model.eval()
+model.to(device)
 
-for layer in pixelcnn.layers:
-    layer.conv_hor.conv.weight.fill_(1)
-    layer.conv_hor.conv.bias.fill_(0)
+out = model(img)
+out = torch.sum(out, dim=1)
+loss = out[0, 1, 5, 5]
+loss.backward(retain_graph=True)
 
-    layer.conv_to_out.conv.weight.fill_(1)
-    layer.conv_to_out.conv.bias.fill_(0)
+influence = img.grad[0].clone().detach()
+influence = torch.ceil(influence.abs())
+for c in range(3):
+    print(f"Channel {c}:\n{influence[c]}\n")
 
-    layer.conv_ver.conv.weight.fill_(1)
-    layer.conv_ver.conv.bias.fill_(0)
+img.grad.zero_()
 
-    layer.conv_ver_to_hor.weight.fill_(1)
-    layer.conv_ver_to_hor.bias.fill_(0)
+loss = out[0, 2, 31, 31]
+loss.backward(retain_graph=True)
+
+influence = img.grad[0].clone().detach()
+influence = torch.ceil(influence.abs())
+for c in range(3):
+    print(f"Channel {c}:\n{influence[c]}\n")
+
+img.grad.zero_()
+
+loss = out[0, 0, 0, 0]
+loss.backward(retain_graph=True)
+
+influence = img.grad[0].clone().detach()
+influence = torch.ceil(influence.abs())
+for c in range(3):
+    print(f"Channel {c}:\n{influence[c]}\n")
+torch.set_grad_enabled(False)
+
 
 #pixelcnn check for successor
 image_list = []
@@ -134,6 +179,7 @@ batches = torch.split(image, 20, dim=0)
 image_list = []
 for batch in batches:
     pred = pixelcnn.calculate(batch)
+    pred = pred * 0.05
     pred = pred.prod(dim=1)
     image_list.append(pred)
 

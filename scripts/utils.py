@@ -66,14 +66,21 @@ def show_tensor_images(tensor, nrow=8, title=None):
 
 
 def show_imgs(imgs, name=""):
-    num_imgs = imgs.shape[0] if isinstance(imgs, torch.Tensor) else len(imgs)
+    if isinstance(imgs, torch.Tensor):
+        num_imgs = imgs.shape[0]
+    else:
+        num_imgs = len(imgs)
+        imgs = torch.stack(imgs)
+
     nrow = min(num_imgs, 4)
-    ncol = int(math.ceil(num_imgs/nrow))
+    ncol = int(math.ceil(num_imgs / nrow))
+
     imgs = torchvision.utils.make_grid(imgs, nrow=nrow, pad_value=128)
-    imgs = imgs.clamp(min=0, max=255)
+    imgs = imgs.clamp(0, 255).byte()  # convert to uint8
     np_imgs = imgs.cpu().numpy()
-    plt.figure(figsize=(1.5*nrow, 1.5*ncol))
-    plt.imshow(np.transpose(np_imgs, (1,2,0)), interpolation='nearest')
+
+    plt.figure(figsize=(1.5 * nrow, 1.5 * ncol))
+    plt.imshow(np.transpose(np_imgs, (1, 2, 0)), interpolation='nearest')
     plt.axis('off')
     plt.title(name)
     plt.show()
