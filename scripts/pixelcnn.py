@@ -186,7 +186,8 @@ class SimplePixelCNN(nn.Module):
         self.conv_out = SimpleMaskedConvolution(c_in=hidden_channels, c_out=input_channels*256, kernel_size=1)
 
     def forward(self, x):
-        x = (x.float() / 255.0) * 2 - 1
+        dtype = next(self.parameters()).dtype
+        x = (x.to(dtype=dtype) / 255.0) * 2 - 1
         return self.calculate(x)
 
     def calculate(self, x):

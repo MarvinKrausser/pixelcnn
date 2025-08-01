@@ -76,7 +76,7 @@ pixelcnn = init_pixelcnn(pixelcnn)
 
 
 torch.set_grad_enabled(True)
-img = torch.full([1, 3, 32, 32], dtype=torch.float32, device=device, fill_value=100)
+img = torch.full([1, 3, 32, 32], dtype=torch.float64, device=device, fill_value=100)
 img.requires_grad_(True)
 
 model = SimplePixelCNN(input_channels=3, hidden_channels=129, kernel_size=3, dilation_pattern=[1,1,2,2,   1,2,4,4,  1,2,4,4,   1,1,1])
