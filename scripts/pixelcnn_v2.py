@@ -146,7 +146,7 @@ class SimpleGatedRGB(nn.Module):
         super().__init__()
         self.conv_ver = SimpleVerticalConvolution(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
         self.conv_hor = SimpleHorizontalConvolutionRGB(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
-        self.conv_ver_to_hor = SimpleMaskedConvolutionRGB(in_channels=c_in*2, out_channels=c_in*2)
+        self.conv_ver_to_hor = nn.Conv2d(in_channels=c_in*2, out_channels=c_in*2, kernel_size=1)
         self.conv_hor_out = SimpleMaskedConvolutionRGB(in_channels=c_in, out_channels=c_in)
 
     def forward(self, hor, ver):
@@ -178,10 +178,12 @@ class PixelCNN(nn.Module):
             horizontal = SimpleHorizontalConvolutionGrey
             gated = SimpleGatedGrey
             out = nn.Conv2d
+            self.outputFnct = self.createOutputGrey
         else:
             horizontal = SimpleHorizontalConvolutionRGB
             gated = SimpleGatedRGB
             out = SimpleMaskedConvolutionRGB
+            self.outputFnct = self.createOutputRGB
 
         self.conv_init_hor = horizontal(c_in=c_in, c_out=c_hidden, kernel_size=kernel_size, mask_center=True)
         self.conv_init_ver = SimpleVerticalConvolution(c_in=c_in, c_out=c_hidden, kernel_size=kernel_size)
@@ -210,7 +212,22 @@ class PixelCNN(nn.Module):
         
         x = self.conv_out(x_hor)
 
-        x = x.reshape(x.shape[0], 256, x.shape[1]//256, x.shape[2], x.shape[3])
+        x = self.outputFnct(x)
+
+        return x
+    
+    def createOutputGrey(self, x):
+        x = x.reshape(x.shape[0], 256, 1, x.shape[2], x.shape[3])
+        return x
+
+    def createOutputRGB(self, x):
+        r, g, b = x.chunk(3, dim=1)
+        r = r.unsqueeze(2)
+        g = g.unsqueeze(2)
+        b = b.unsqueeze(2)
+
+        # Output dimensions: [Batch, Classes, Channels, Height, Width]
+        x = torch.cat([r, g, b], dim=2)
 
         return x
     
