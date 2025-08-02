@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 import matplotlib.pyplot as plt
@@ -23,11 +24,11 @@ class MaskedConvolution(nn.Module):
     def __init__(self, c_in, c_out, mask, dilation = 1):
         super().__init__()
         if mask.dim() != 4:
-            raise Exception("Maks not enough Dimensions")
+            raise Exception("Mask not enough Dimensions")
         
-        kernel_size = mask.shape[3]
+        kernel_size = [mask.shape[2], mask.shape[3]]
 
-        padding = dilation*(kernel_size//2)
+        padding = tuple([dilation*(kernel_size[i]-1)//2 for i in range(2)])
         self.conv = nn.Conv2d(in_channels=c_in, out_channels=c_out, dilation=dilation, padding=padding, kernel_size=kernel_size)
 
         self.register_buffer('mask', mask)
@@ -37,41 +38,93 @@ class MaskedConvolution(nn.Module):
         return self.conv(x)
     
 
-class SimpleMaskedConvolution(MaskedConvolution):
+class SimpleMaskedConvolutionRGB(MaskedConvolution):
+    def __init__(self, in_channels, out_channels, kernel_size=1):
+        if(in_channels % 3 != 0):
+            raise Exception("Channel not divisible by 3")
+        
+        mask = torch.ones(out_channels, in_channels, 1, 1)
+
+        section = out_channels//3
+        mask[:section, section:, 0, 0] = 0
+        mask[section:section*2, section*2:, 0, 0] = 0
+
+        super().__init__(c_in=in_channels, c_out=out_channels, mask=mask, dilation=1)
+
+class SimpleVerticalConvolution(nn.Module):
     def __init__(self, c_in, c_out, kernel_size = 3, dilation = 1):
-        mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
+        if(kernel_size % 2 == 0):
+            raise Exception("Even kernel_size")
+        super().__init__()
+        kernel_size_hor = kernel_size + self.half_even(kernel_size)
 
-        mask[:, :, kernel_size//2, kernel_size//2:] = 0
-        mask[:, :, kernel_size//2+1:, :] = 0
+        self.padding_ver = ((kernel_size // 2) * dilation) * 2
+        self.padding_hor = dilation * (kernel_size_hor // 2)
 
-        super().__init__(c_in=c_in, c_out=c_out, mask=mask, dilation=dilation)
+        self.conv = nn.Conv2d(in_channels=c_in, out_channels=c_out, kernel_size=(kernel_size, kernel_size_hor), dilation=dilation, padding=0)
 
-class SimpleVerticalConvolution(MaskedConvolution):
-    def __init__(self, c_in, c_out, kernel_size = 3, dilation = 1):
-        mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
+    def forward(self, x):
+        x = F.pad(x, (self.padding_hor, self.padding_hor, self.padding_ver, 0))
+        x = self.conv(x)
+        return x
+    
+    def half_even(self, n):
+        h = (n + 1) // 2
+        return h + (h % 2)
 
-        mask[:, :, kernel_size//2+1:, :] = 0
-
-        super().__init__(c_in=c_in, c_out=c_out, mask=mask, dilation=dilation)
-
-class SimpleHorizontalConvolution(MaskedConvolution):
+class SimpleHorizontalConvolutionGrey(nn.Module):
     def __init__(self, c_in, c_out, kernel_size = 3, dilation = 1, mask_center=False):
-        mask = torch.ones(c_out, c_in, kernel_size, kernel_size)
+        if(kernel_size % 2 == 0):
+            raise Exception("Even kernel_size")
+        super().__init__()
 
-        mask[:, :, :kernel_size//2, :] = 0
-        mask[:, :, kernel_size//2, kernel_size//2+1:] = 0
-        mask[:, :, kernel_size//2+1:, :] = 0
+        self.padding = ((kernel_size // 2) * dilation) * 2
+        if mask_center:
+            self.padding += 1
+        self.mask_center = mask_center
+        self.conv = nn.Conv2d(in_channels=c_in, out_channels=c_out, kernel_size=(1, kernel_size), dilation=dilation, padding=0)
+
+    def forward(self, x):
+        x = F.pad(x, (self.padding, 0))
+        if self.mask_center:
+            x = x[:, :, :, :-1]
+        x = self.conv(x)
+        return x
+    
+class SimpleHorizontalConvolutionRGB(nn.Module):
+    def __init__(self, c_in, c_out, kernel_size = 3, dilation = 1, mask_center=False):
+        if(kernel_size % 2 == 0):
+            raise Exception("Even kernel_size")
+        if(c_in % 3 != 0):
+            raise Exception("Channel not divisible by 3")
+        super().__init__()
+
+        self.padding = ((kernel_size // 2) * dilation) * 2
+        self.conv = nn.Conv2d(in_channels=c_in, out_channels=c_out, kernel_size=(1, kernel_size), dilation=dilation, padding=0)
+
+        mask = torch.ones(c_out, c_in, 1, kernel_size)
 
         if mask_center:
-            mask[:, :, kernel_size//2, kernel_size//2] = 0
+            mask[                :c_out // 3      ,                :         , 0, -1] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3,       c_in // 3:         , 0, -1] = 0 #Out: g
+            mask[(c_out * 2) // 3:                , (c_in * 2) // 3:         , 0, -1] = 0 #Out: b
+        else:
+            mask[                :c_out // 3      ,       c_in // 3:         , 0, -1] = 0 #Out: r
+            mask[c_out // 3      :(c_out * 2) // 3, (c_in * 2) // 3:         , 0, -1] = 0 #Out: g
 
-        super().__init__(c_in=c_in, c_out=c_out, mask=mask, dilation=dilation)
+        self.register_buffer('mask', mask)
 
-class SimpleGated(nn.Module):
+    def forward(self, x):
+        x = F.pad(x, (self.padding, 0))
+        self.conv.weight.data *= self.mask
+        x = self.conv(x)
+        return x
+
+class SimpleGatedGrey(nn.Module):
     def __init__(self, c_in, kernel_size=3, dilation=1):
         super().__init__()
         self.conv_ver = SimpleVerticalConvolution(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
-        self.conv_hor = SimpleHorizontalConvolution(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
+        self.conv_hor = SimpleHorizontalConvolutionGrey(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
         self.conv_ver_to_hor = nn.Conv2d(in_channels=c_in*2, out_channels=c_in*2, kernel_size=1)
         self.conv_hor_out = nn.Conv2d(in_channels=c_in, out_channels=c_in, kernel_size=1)
 
@@ -87,20 +140,58 @@ class SimpleGated(nn.Module):
         feat_hor = self.conv_hor_out(feat_hor)
         hor = hor + feat_hor
         return hor, out_ver
+    
+class SimpleGatedRGB(nn.Module):
+    def __init__(self, c_in, kernel_size=3, dilation=1):
+        super().__init__()
+        self.conv_ver = SimpleVerticalConvolution(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
+        self.conv_hor = SimpleHorizontalConvolutionRGB(c_in=c_in, c_out=c_in*2, kernel_size=kernel_size, dilation=dilation)
+        self.conv_ver_to_hor = SimpleMaskedConvolutionRGB(in_channels=c_in*2, out_channels=c_in*2)
+        self.conv_hor_out = SimpleMaskedConvolutionRGB(in_channels=c_in, out_channels=c_in)
+
+    def forward(self, hor, ver):
+        feat_ver = self.conv_ver(ver)
+        signal_ver, gate_ver = self.split_val_gate_rgb(feat_ver)
+        out_ver = torch.tanh(signal_ver) * torch.sigmoid(gate_ver)
+
+        feat_hor = self.conv_hor(hor)
+        feat_hor =  feat_hor + self.conv_ver_to_hor(feat_ver)
+        signal_hor, gate_hor = self.split_val_gate_rgb(feat_hor)
+        feat_hor = torch.tanh(signal_hor) * torch.sigmoid(gate_hor)
+        feat_hor = self.conv_hor_out(feat_hor)
+        hor = hor + feat_hor
+        return hor, out_ver
+    
+    def split_val_gate_rgb(self, tensor):
+        r, g, b = tensor.chunk(3, dim=1)
+        val_r, gate_r = r.chunk(2, dim=1)
+        val_g, gate_g = g.chunk(2, dim=1)
+        val_b, gate_b = b.chunk(2, dim=1)
+        val = torch.cat([val_r, val_g, val_b], dim=1)
+        gate = torch.cat([gate_r, gate_g, gate_b], dim=1)
+        return val, gate
 
 class PixelCNN(nn.Module):
     def __init__(self, c_in, c_hidden, dilation_pattern, kernel_size=3):
         super().__init__()
+        if c_in == 1:
+            horizontal = SimpleHorizontalConvolutionGrey
+            gated = SimpleGatedGrey
+            out = nn.Conv2d
+        else:
+            horizontal = SimpleHorizontalConvolutionRGB
+            gated = SimpleGatedRGB
+            out = SimpleMaskedConvolutionRGB
 
-        self.conv_init_hor = SimpleHorizontalConvolution(c_in=c_in, c_out=c_hidden, kernel_size=kernel_size, mask_center=True)
+        self.conv_init_hor = horizontal(c_in=c_in, c_out=c_hidden, kernel_size=kernel_size, mask_center=True)
         self.conv_init_ver = SimpleVerticalConvolution(c_in=c_in, c_out=c_hidden, kernel_size=kernel_size)
 
         self.layers = nn.ModuleList()
 
         for pattern in dilation_pattern:
-            self.layers.append(SimpleGated(c_in=c_hidden, kernel_size=kernel_size, dilation=pattern))
+            self.layers.append(gated(c_in=c_hidden, kernel_size=kernel_size, dilation=pattern))
 
-        self.conv_out = nn.Conv2d(in_channels=c_hidden, out_channels=256*c_in, kernel_size=1)
+        self.conv_out = out(in_channels=c_hidden, out_channels=256*c_in, kernel_size=1)
 
     def forward(self, x):
         x = (x.float() / 255.0) * 2 - 1
@@ -192,28 +283,28 @@ def trainPixelCNN(model, optimizer, loss_module, train_data_loader, validation_d
 
 def sample(model, img_shape, device, SAVE_PATH, model_name, folder, img=None, temp=1):
     #img_shape(batch, channel, height, width)
-    for root, _, files in os.walk(os.path.join(SAVE_PATH, folder)):
-        for file in files:
-            if file.startswith(model_name):
-                print(f"Filename: {file}")
-                full_path = os.path.join(root, file)
-    state_dict = torch.load(full_path, weights_only=False)
-    model.load_state_dict(state_dict)
-    model.eval()
-    if img == None:
-        img = torch.zeros(img_shape, device=device, dtype=torch.float32)-1
-    else:
-        img = img.to(device)
-    for h in tqdm(range(img_shape[2]), desc=f"Generating", leave=False):
-        for w in range(img_shape[3]):
-            for c in range(img_shape[1]):
-                if (img[:,c,h,w] != -1).all().item():
-                        continue
-                pred = model(img[:,:,:h+1,:])
-                pred = pred * temp
-                probs = F.softmax(pred[:,:,c,h,w], dim=-1)
-                img[:,c,h,w] = torch.multinomial(probs, num_samples=1).squeeze(dim=-1)
-    return img
+    with torch.no_grad():
+        for root, _, files in os.walk(os.path.join(SAVE_PATH, folder)):
+            for file in files:
+                if file.startswith(model_name):
+                    print(f"Filename: {file}")
+                    full_path = os.path.join(root, file)
+        state_dict = torch.load(full_path, weights_only=False)
+        model.load_state_dict(state_dict)
+        model.eval()
+        if img == None:
+            img = torch.zeros(img_shape, device=device, dtype=torch.float32)-1
+        else:
+            img = img.to(device)
+        for h in tqdm(range(img_shape[2]), desc=f"Generating", leave=False):
+            for w in range(img_shape[3]):
+                for c in range(img_shape[1]):
+                    if (img[:,c,h,w] != -1).all().item():
+                            continue
+                    pred = model(img[:,:,:h+1,:])
+                    probs = F.softmax(pred[:,:,c,h,w] / temp, dim=-1)
+                    img[:,c,h,w] = torch.multinomial(probs, num_samples=1).squeeze(dim=-1)
+        return img
 
 def loadCheckpoint(model, SAVE_PATH, folder_name, model_name, load_checkpoint):
     best_loss = sys.float_info.max

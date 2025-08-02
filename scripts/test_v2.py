@@ -30,7 +30,7 @@ import torchvision
 from torchvision.datasets import CIFAR10
 from torchvision import transforms
 
-from pixelcnn_v2 import PixelCNN
+from pixelcnn_v2 import PixelCNN, SimpleHorizontalConvolutionGrey, SimpleHorizontalConvolutionRGB
 import matplotlib.pyplot as plt
 
 device = torch.device("cpu") if not torch.cuda.is_available() else torch.device("cuda:0")
@@ -38,16 +38,17 @@ print("Using device", device)
 
 torch.set_printoptions(linewidth=200, profile="full")
 
-def show_mask(mask):
-    plt.imshow(mask[0,0], cmap="gray")
-    plt.title("Horizontal Mask")
-    plt.axis("off")
-    plt.show()
+def resetGrad(model, input):
+    if input.grad is not None:
+        input.grad.zero_()
+    for param in model.parameters():
+        if param.grad is not None:
+            param.grad.zero_()
 
 
-img = torch.zeros(size=[1, 1, 28, 28], dtype=torch.float, requires_grad=True, device=device)
+img = torch.zeros(size=[1, 3, 28, 28], dtype=torch.float, requires_grad=True, device=device)
 
-model = PixelCNN(c_in=1, c_hidden=30, kernel_size=3, dilation_pattern=[1,1,2,2,   1,2,4,4,  1,2,4,4,   1,1,1])
+model = PixelCNN(c_in=3, c_hidden=30, kernel_size=3, dilation_pattern=[1,1,1,      1,1])
 model.eval()
 model.to(device)
 
@@ -58,8 +59,12 @@ out = torch.sum(out, dim=1)
 loss = out[0, 0, 0, 0]
 loss.backward()
 
-influence = img.grad[0, 0]
-print(f"{torch.ceil(influence.abs())}\n")
+influence = img.grad[0]
+for c in range(img.size(1)):
+    print(f"channel: {c}:\n{torch.ceil(influence[c].abs())}\n")
+resetGrad(model, img)
+
+exit()
 
 out = model(img)
 out = out.abs()
@@ -70,6 +75,7 @@ loss.backward()
 
 influence = img.grad[0, 0]
 print(f"{torch.ceil(influence.abs())}\n")
+resetGrad(model, img)
 
 out = model(img)
 out = out.abs()
@@ -80,3 +86,15 @@ loss.backward()
 
 influence = img.grad[0, 0]
 print(f"{torch.ceil(influence.abs())}\n")
+resetGrad(model, img)
+
+out = model(img)
+out = out.abs()
+out = torch.sum(out, dim=1)
+
+loss = out[0, 0, 27, 0]
+loss.backward()
+
+influence = img.grad[0, 0]
+print(f"{torch.ceil(influence.abs())}\n")
+resetGrad(model, img)

@@ -44,7 +44,7 @@ print("Using device", device)
 
 
 # 2. Model, optimiser, loss
-model = PixelCNN(c_in=1, c_hidden=30, kernel_size=5, dilation_pattern=[1,1,2,2,   1,1,2,2,  1,1,2,2,   1,1,1])
+model = PixelCNN(c_in=1, c_hidden=64, kernel_size=5, dilation_pattern=[1,1,2,      1,1])
 model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_module = nn.CrossEntropyLoss(reduction='none')
@@ -66,11 +66,11 @@ val_set = MNIST(root=DATASET_PATH, train=False, transform=transform, download=Tr
 train_loader = data.DataLoader(train_set, batch_size=128, shuffle=True, drop_last=False, pin_memory=True, num_workers=0)
 val_loader = data.DataLoader(val_set, batch_size=128, shuffle=False, drop_last=False, num_workers=0)
 
-batch, _ = next(iter(train_loader))
-batch = batch[:12]
-batch[:, :, 20:, :] = -1
+#batch, _ = next(iter(train_loader))
+#batch = batch[:12]
+#batch[:, :, 20:, :] = -1
 
-show_imgs(sample(model, [12, 1, 28, 28], device, model_name="v115_gen_mnist", folder="gen_mnist", SAVE_PATH=SAVE_PATH, temp=1, img=None))
+show_imgs(sample(model, [12, 1, 28, 28], device, model_name="v28_gen_mnist", folder="gen_mnist", SAVE_PATH=SAVE_PATH, temp=1, img=None))
 exit()
 
 trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, validation_data_loader=val_loader, 
