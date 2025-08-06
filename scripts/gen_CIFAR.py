@@ -30,7 +30,7 @@ import torchvision
 from torchvision.datasets import CIFAR10, MNIST
 from torchvision import transforms
 
-from pixelcnn import PixelCNN, SimplePixelCNN, trainPixelCNN, sample
+from pixelcnn_v2 import PixelCNN, trainPixelCNN, sample
 import matplotlib.pyplot as plt
 
 
@@ -44,10 +44,10 @@ print("Using device", device)
 
 
 # 2. Model, optimiser, loss
-model = SimplePixelCNN(input_channels=3, hidden_channels=129, kernel_size=3, dilation_pattern=[1,1,2,2,   1,2,4,4,  1,2,4,4,   1,1,1])
+model = PixelCNN(c_in=3, c_hidden=180, kernel_size=5, dilation_pattern=[1,1,2,      1,1])
 model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-loss_module = nn.CrossEntropyLoss()
+loss_module = nn.CrossEntropyLoss(reduction='none')
 
 # Convert images from 0-1 to 0-255 (integers). We use the long datatype as we will use the images as labels as well
 def discretize(sample):
@@ -68,39 +68,15 @@ train_dataset = CIFAR10(root=DATASET_PATH, train=True, transform=train_transform
 val_dataset = CIFAR10(root=DATASET_PATH, train=False, transform=test_transform, download=True)
 
 # We define a set of data loaders that we can use for various purposes later.
-train_loader = data.DataLoader(train_dataset, batch_size=35, shuffle=True, drop_last=True, pin_memory=True, num_workers=0)
-val_loader = data.DataLoader(val_dataset, batch_size=35, shuffle=False, drop_last=False, pin_memory=True, num_workers=0)
+train_loader = data.DataLoader(train_dataset, batch_size=30, shuffle=True, drop_last=True, pin_memory=True, num_workers=0)
+val_loader = data.DataLoader(val_dataset, batch_size=30, shuffle=False, drop_last=False, pin_memory=True, num_workers=0)
 
-"""
-# Convert images from 0-1 to 0-255 (integers). We use the long datatype as we will use the images as labels as well
-def discretize(sample):
-    return (sample * 255).to(torch.long)
+#batch, _ = next(iter(train_loader))
+#batch = batch[:12]
+#batch[:, :, 20:, :] = -1
 
-# Transformations applied on each image => only make them a tensor
-transform = transforms.Compose([transforms.ToTensor(),
-                                discretize])
-
-train_set = MNIST(root=DATASET_PATH, train=True, transform=transform, download=True)
-
-# Loading the test set
-val_set = MNIST(root=DATASET_PATH, train=False, transform=transform, download=True)
-
-# We define a set of data loaders that we can use for various purposes later.
-train_loader = data.DataLoader(train_set, batch_size=128, shuffle=True, drop_last=False, pin_memory=True, num_workers=0)
-val_loader = data.DataLoader(val_set, batch_size=128, shuffle=False, drop_last=False, num_workers=0)
-"""
-"""
-batch, _ = next(iter(train_loader))
-images = batch[:4].to(device)
-"""
-
-#show_imgs(sample(model, [4, 3, 32, 32], device, model_name="v81_gen_CIFAR", folder="gen_CIFAR", SAVE_PATH=SAVE_PATH, temp=1e-5))
+#show_imgs(sample(model, [12, 3, 32, 32], device, model_name="v7_gen_CIFAR", folder="gen_CIFAR", SAVE_PATH=SAVE_PATH, temp=1, img=None))
 #exit()
 
-#best: 0.75
 trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, validation_data_loader=val_loader, 
               device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_CIFAR", folder_name="gen_CIFAR", load_checkpoint=-1)
-
-
-
-#epoch 4: 4.476  4.425
