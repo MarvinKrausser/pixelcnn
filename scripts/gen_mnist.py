@@ -70,8 +70,9 @@ val_loader = data.DataLoader(val_set, batch_size=128, shuffle=False, drop_last=F
 #batch = batch[:12]
 #batch[:, :, 20:, :] = -1
 
-condition = torch.tensor((0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1))
-show_imgs(sample(model, [12, 1, 28, 28], device, model_name="v22_gen_mnist", folder="gen_mnist_condition", SAVE_PATH=SAVE_PATH, temp=1, img=None, condition=condition))
+condition = torch.tensor((0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+condition = condition.repeat(4)
+show_imgs(sample(model, [len(condition), 1, 28, 28], device, model_name="v22_gen_mnist", folder="gen_mnist_condition", SAVE_PATH=SAVE_PATH, temp=1, img=None, condition=condition))
 exit()
 
 trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, validation_data_loader=val_loader, 

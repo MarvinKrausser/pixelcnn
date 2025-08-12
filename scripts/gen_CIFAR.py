@@ -44,7 +44,7 @@ print("Using device", device)
 
 
 # 2. Model, optimiser, loss
-model = PixelCNN(c_in=3, c_hidden=180, kernel_size=5, dilation_pattern=[1,1,2,      1,1])
+model = PixelCNN(c_in=1, c_hidden=90, kernel_size=5, dilation_pattern=[1,1,2,      1,1])
 model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_module = nn.CrossEntropyLoss(reduction='none')
@@ -53,11 +53,13 @@ loss_module = nn.CrossEntropyLoss(reduction='none')
 def discretize(sample):
     return (sample * 255).to(torch.long)
 
-test_transform = transforms.Compose([transforms.ToTensor(),
+test_transform = transforms.Compose([transforms.Grayscale(1),
+                                     transforms.ToTensor(),
                                      discretize
                                      ])
 # For training, we add some augmentation. Networks are too powerful and would overfit.
-train_transform = transforms.Compose([transforms.RandomHorizontalFlip(),
+train_transform = transforms.Compose([transforms.Grayscale(1), 
+                                      transforms.RandomHorizontalFlip(),
                                       transforms.RandomResizedCrop((32,32), scale=(0.8,1.0), ratio=(0.9,1.1)),
                                       transforms.ToTensor(),
                                       discretize
@@ -75,8 +77,8 @@ val_loader = data.DataLoader(val_dataset, batch_size=30, shuffle=False, drop_las
 #batch = batch[:12]
 #batch[:, :, 20:, :] = -1
 
-#show_imgs(sample(model, [12, 3, 32, 32], device, model_name="v7_gen_CIFAR", folder="gen_CIFAR", SAVE_PATH=SAVE_PATH, temp=1, img=None))
+#show_imgs(sample(model, [2, 3, 32, 32], device, model_name="v7_gen_CIFAR", folder="gen_CIFAR", SAVE_PATH=SAVE_PATH, temp=1, img=None))
 #exit()
 
 trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, validation_data_loader=val_loader, 
-              device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_CIFAR", folder_name="gen_CIFAR", load_checkpoint=-1)
+              device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_CIFAR", folder_name="gen_CIFAR_gray", load_checkpoint=-1)
