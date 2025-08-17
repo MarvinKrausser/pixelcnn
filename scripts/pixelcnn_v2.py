@@ -110,8 +110,8 @@ class SimpleGatedGrey(nn.Module):
         signal_hor, gate_hor = feat_hor.chunk(2, dim=1)
 
         if condition != None:
-            signal_ver = signal_ver + condition
-            gate_ver = gate_ver + condition
+            signal_hor = signal_hor + condition
+            gate_hor = gate_hor + condition
 
         feat_hor = torch.tanh(signal_hor) * torch.sigmoid(gate_hor)
         feat_hor = self.conv_hor_out(feat_hor)
