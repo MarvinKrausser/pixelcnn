@@ -1,1 +1,1 @@
-![results](images/example.png)
+![results](mnist_conditioned_gen_results.png)
