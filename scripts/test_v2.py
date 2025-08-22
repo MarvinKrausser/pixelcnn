@@ -38,6 +38,20 @@ print("Using device", device)
 
 torch.set_printoptions(linewidth=200, profile="full")
 
+
+img = torch.ones(size=(1, 1, 100, 100))
+for kernel in range(1, 10):
+    for padding in range(10):
+        for dilation in range(1, 10):
+            for stride in range(1, 10):
+                conv = nn.ConvTranspose2d(in_channels=1, out_channels=1, kernel_size=kernel, padding=padding, dilation=dilation, stride=stride)
+                result = conv(img)
+                if result.size(3) != (img.size(3) - 1) * stride + dilation * (kernel - 1) - 2 * padding + 1:
+                    print(f"result: {result.size(3)}, origin: {img.size(3)}, padding: {padding}, kernel: {kernel}, dilation: {dilation}, calculated: {(img.size(3) - 1) * stride + dilation * (kernel - 1) - 2 * padding}")
+
+exit()
+
+
 class HelperConstruct(nn.Module):
     def __init__(self, c_in=3, c_hidden=3, kernel_size=3):
         super().__init__()

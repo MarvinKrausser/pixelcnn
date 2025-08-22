@@ -314,9 +314,7 @@ def compute_loss(loss_module, device, data_inputs, means, log_scales, mixture_lo
 
     summed_prob = torch.sum(weighted_prob, dim=1)
 
-    target = torch.ones(summed_prob.size(), dtype=torch.float32, device=device)
-
-    loss = loss_module(summed_prob, target)
+    loss = - torch.log(summed_prob)
     loss = loss.unsqueeze(1)
 
     loss_bits_per_dim_train = loss.mean(dim=[1,2,3]) * np.log2(np.exp(1))
