@@ -6,7 +6,6 @@ import numpy as np
 ## Imports for plotting
 import matplotlib.pyplot as plt
 
-from model import DIYPixelCNNGray
 from utils import show_imgs, show_tensor_images
 
 plt.set_cmap('cividis')
@@ -34,7 +33,7 @@ from pixelcnn_v2 import PixelCNN, trainPixelCNN, sample
 import matplotlib.pyplot as plt
 
 
-# Path to the folder where the datasets are/should be downloaded (e.g. MNIST)
+# Path to the folder where the datasets are/should be downloaded
 DATASET_PATH = "../data"
 # Path to the folder where the pretrained models are saved
 SAVE_PATH = "../saved_models"
@@ -49,11 +48,10 @@ model.to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 loss_module = nn.CrossEntropyLoss(reduction='none')
 
-# Convert images from 0-1 to 0-255 (integers). We use the long datatype as we will use the images as labels as well
+
 def discretize(sample):
     return (sample * 255).to(torch.long)
 
-# Transformations applied on each image => only make them a tensor
 transform = transforms.Compose([transforms.ToTensor(),
                                 discretize])
 
@@ -70,10 +68,12 @@ val_loader = data.DataLoader(val_set, batch_size=128, shuffle=False, drop_last=F
 #batch = batch[:12]
 #batch[:, :, 20:, :] = -1
 
+#sample
 condition = torch.tensor((0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
 condition = condition.repeat(4)
 show_imgs(sample(model, [len(condition), 1, 28, 28], device, model_name="v43_gen_mnist", folder="gen_mnist_condition", SAVE_PATH=SAVE_PATH, temp=1, img=None, condition=condition))
 exit()
 
+#train
 trainPixelCNN(model=model, loss_module=loss_module, optimizer=optimizer, train_data_loader=train_loader, validation_data_loader=val_loader, 
               device=device, SAVE_PATH=SAVE_PATH, num_epochs=300, model_name="gen_mnist", folder_name="gen_mnist_condition", load_checkpoint=-1, condition=True)
